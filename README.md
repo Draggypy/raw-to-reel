@@ -2,6 +2,8 @@
 
 Procesador automático de video talking-head: corta silencios y muletillas/repeticiones, y quema subtítulos generados automáticamente — sin edición manual.
 
+Pensado especialmente para contenido tipo Reels, TikTok y Stories de Instagram — video vertical de una persona hablando a cámara.
+
 Corre como un servicio que vigila una carpeta: dejás un video crudo adentro y sale editado del otro lado.
 
 ## Qué hace

@@ -1,0 +1,11 @@
+venv/
+__pycache__/
+*.pyc
+
+# Carpetas de trabajo -- videos reales de gente, no van al repo
+Crudos/
+Listos/
+Temp/
+Logs/
+
+config/config-OK-Hola-2026-08-24.py

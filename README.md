@@ -1,50 +1,284 @@
 # Gianni Edit
 
-Procesador automático de video talking-head: corta silencios y muletillas/repeticiones, y quema subtítulos generados automáticamente — sin edición manual.
+**Editor automático de video *talking-head*: de crudo a listo, sin tocar un editor.**
 
-Pensado especialmente para contenido tipo Reels, TikTok y Stories de Instagram — video vertical de una persona hablando a cámara.
+Dejás un video de una persona hablando a cámara en una carpeta. Gianni Edit corta los silencios, las muletillas y los arranques en falso, agrega subtítulos palabra por palabra y te devuelve el video editado en otra carpeta. Todo corre en tu propia máquina: sin APIs externas, sin cuentas, sin subir tu video a ningún lado.
 
-Corre como un servicio que vigila una carpeta: dejás un video crudo adentro y sale editado del otro lado.
+Pensado para contenido vertical tipo **Reels, TikTok y Stories de Instagram**.
+
+```
+   Crudos/                        Gianni Edit                        Listos/
+┌──────────────┐    ┌──────────────────────────────────────┐    ┌──────────────┐
+│ mi-video.mp4 │ ─► │ transcribe → detecta → corta →       │ ─► │ mi-video.mp4 │
+│ (sin editar) │    │ subtitula → renderiza → valida       │    │ (editado)    │
+└──────────────┘    └──────────────────────────────────────┘    └──────────────┘
+                                   │
+                                   └─► si algo falla: Crudos/fallidos/  (el original nunca se pierde)
+```
+
+---
 
 ## Qué hace
 
-1. **Transcribe** el video con [faster-whisper](https://github.com/SYSTRAN/faster-whisper) (local, sin API externa).
-2. **Detecta** silencios, muletillas y repeticiones.
-3. **Consolida los cortes**, protegiendo palabras completas (nunca corta a mitad de una).
-4. **Genera subtítulos** remapeados a los tiempos ya cortados.
-5. **Corta y quema los subtítulos** con `ffmpeg` en un solo paso.
-6. **Valida** el resultado antes de darlo por bueno — si algo falla, el video se marca como fallido en vez de entregarse a medias.
+1. **Transcribe** el audio con [faster-whisper](https://github.com/SYSTRAN/faster-whisper), localmente, con timestamp por palabra.
+2. **Detecta** silencios (por volumen real del audio), muletillas ("eh", "o sea", "tipo"…) y repeticiones (cuando te trabás y arrancás la frase de nuevo).
+3. **Consolida los cortes** en la lista final de tramos a conservar, cuidando de no dejar "flashes" de escena de una fracción de segundo.
+4. **Genera los subtítulos** (formato `.ass`) ya ajustados a los tiempos del video cortado.
+5. **Corta y quema los subtítulos** con `ffmpeg`.
+6. **Valida** el resultado. Solo si pasa todos los chequeos se entrega a `Listos/`; si no, el video va a `Crudos/fallidos/` y el original queda intacto.
+
+## Requisitos
+
+| Necesitás | Notas |
+|---|---|
+| **Python 3** reciente | Desarrollado y probado con Python 3.12. Las versiones fijadas en `requirements.txt` pueden exigir un Python reciente. |
+| **ffmpeg** (con `ffprobe` y soporte de subtítulos `libass`) | Tiene que estar en el `PATH`. La mayoría de los paquetes de las distribuciones lo traen. |
+| **Espacio libre en disco** | Para el modelo de transcripción (se descarga solo la primera vez, alrededor de medio GB para `small`) y para los temporales del render, que pesan del orden del video que estés procesando. |
+| **Una CPU razonable** | Por defecto usa CPU (`int8`), no necesita GPU. |
+
+**Sistema operativo:** desarrollado y usado a diario en **Linux**. En macOS debería funcionar igual (el código usa `pathlib` y llama a `ffmpeg`), pero no está probado ahí. En Windows no está probado.
+
+## Instalación
+
+```bash
+# 1. Clonar el repo
+git clone https://github.com/Draggypy/gianni-edit.git
+cd gianni-edit
+
+# 2. Entorno virtual + dependencias
+python3 -m venv venv
+source venv/bin/activate          # en Windows: venv\Scripts\activate
+pip install -r requirements.txt
+
+# 3. ffmpeg (si no lo tenés)
+sudo apt install ffmpeg           # Debian/Ubuntu/Mint
+# brew install ffmpeg             # macOS
+
+# 4. Crear la carpeta donde vas a dejar los videos
+mkdir Crudos
+```
+
+Verificá que `ffmpeg` y `ffprobe` respondan:
+
+```bash
+ffmpeg -version && ffprobe -version
+```
+
+> **No hace falta configurar rutas.** Las carpetas de trabajo se calculan solas a partir de donde está el proyecto (`Crudos/`, `Listos/`, `Temp/`, `Logs/`). Solo `Crudos/` tenés que crearla vos; el resto se crea automáticamente al primer uso.
 
 ## Cómo se usa
 
+### Uso básico
+
 ```bash
-python -m venv venv
 source venv/bin/activate
-pip install -r requirements.txt
-```
-
-Necesitás `ffmpeg` instalado en el sistema.
-
-Ajustá `src/config.py` con las rutas de tus carpetas (`Crudos/`, `Listos/`, `Temp/`, `Logs/`) y corré:
-
-```bash
 python src/main.py
 ```
 
-Dejá un video en `Crudos/` — cuando termina de procesarlo, aparece listo en `Listos/`. Un video a la vez, siempre.
+1. Copiá un video a `Crudos/` (formatos: `.mp4`, `.mov`, `.mkv`, `.avi`).
+2. El programa lo detecta solo. Espera a que termine de copiarse (mira que el tamaño del archivo deje de cambiar), así que podés pasar archivos desde el celular o un USB sin problema.
+3. Lo procesa. Cuando termina, aparece en `Listos/` **con el mismo nombre**.
+4. El original desaparece de `Crudos/` **recién cuando la copia en `Listos/` ya fue verificada.**
 
-## Parámetros principales (`src/config.py`)
+El programa queda corriendo y vigilando `Crudos/`. Procesa **un video a la vez**, del más viejo al más nuevo. Para pararlo: `Ctrl+C` (termina el video que está procesando y sale).
 
-- `DURACION_MINIMA_SILENCIO_MS` — cuánto silencio hace falta para que se considere corte.
-- `MARGEN_SILENCIO_MS` — margen en cada borde del corte para no comerse una palabra.
-- `TRAMO_MINIMO_SEG` — evita dejar tramos de una fracción de segundo.
+### Ver qué está haciendo
+
+En otra terminal, sin necesidad de activar el `venv`:
+
+```bash
+python3 ver_estado.py
+```
+
+Muestra en vivo la etapa de cada video:
+
+```
+[2026-09-24 12:30:01] mi-video.mp4 -> transcribiendo
+[2026-09-24 12:31:14] mi-video.mp4 -> detectando silencios
+...
+[2026-09-24 12:33:40] (ninguno) -> esperando
+```
+
+Las etapas, en orden: `extrayendo audio` → `transcribiendo` → `detectando silencios` → `buscando muletillas y repeticiones` → `consolidando cortes` → `generando subtítulos` → `cortando y renderizando` → `validando` → `moviendo a Listos`.
+
+El historial completo queda en `Logs/editor_gianni.log` (una línea con fecha por evento, incluyendo cuántos silencios, muletillas y tramos encontró en cada video).
+
+### Dejarlo corriendo siempre (Linux, systemd)
+
+Si querés que arranque con la máquina y procese solo lo que dejes en `Crudos/`, podés usar un servicio de usuario. Ejemplo (`~/.config/systemd/user/gianni-edit.service`), ajustando las rutas:
+
+```ini
+[Unit]
+Description=Gianni Edit
+
+[Service]
+WorkingDirectory=/ruta/a/gianni-edit
+ExecStart=/ruta/a/gianni-edit/venv/bin/python /ruta/a/gianni-edit/src/main.py
+Restart=on-failure
+# Recomendado en máquinas chicas: que no acapare recursos
+Nice=15
+CPUQuota=200%
+MemoryMax=2500M
+
+[Install]
+WantedBy=default.target
+```
+
+```bash
+systemctl --user daemon-reload
+systemctl --user enable --now gianni-edit.service
+systemctl --user status gianni-edit.service
+```
+
+> **Ojo si mudás la carpeta del proyecto:** hay que actualizar las rutas del `.service` y correr `daemon-reload` + `restart`. Si no, el servicio sigue "activo" pero mirando una carpeta vieja y no procesa nada.
+
+## Qué le pasa a tus archivos
+
+- **El original nunca se toca hasta el final.** Se procesa una copia temporal en `Temp/`. Solo cuando la copia terminada está en `Listos/` y su tamaño coincide con el temporal se borra el original de `Crudos/`.
+- **Si algo falla** (transcripción vacía, error de `ffmpeg`, validación que no pasa) el original se mueve a `Crudos/fallidos/` para no reintentarse en bucle. La causa queda en `Logs/editor_gianni.log`.
+- **Para reintentar** un video fallido: devolvelo a `Crudos/`.
+- Todo lo de `Crudos/`, `Listos/`, `Temp/` y `Logs/` está en el `.gitignore`: tus videos nunca llegan al repositorio.
+
+---
+
+## Configuración
+
+Todo lo ajustable está en un solo archivo: [`src/config.py`](src/config.py). Cada constante tiene al lado un comentario que explica por qué tiene el valor que tiene. Los principales:
+
+### Cortes
+
+| Constante | Valor por defecto | Qué controla |
+|---|---|---|
+| `DURACION_MINIMA_SILENCIO_MS` | `300` | Una pausa más corta que esto **no se corta**. Subilo si corta pausas naturales dentro de una frase. |
+| `MARGEN_SILENCIO_MS` | `150` | Cuánto silencio se deja en **cada borde** de un corte. Con 150, cada pausa cortada deja ~300 ms de silencio audible. Bajalo si querés cortes más secos; subilo si se siente que "corta apenas dejo de hablar". |
+| `TRAMO_MINIMO_SEG` | `0.3` | Evita tramos conservados de una fracción de segundo (se ven como un parpadeo). |
+| `MARGEN_DB_SOBRE_PISO` | `17` | Sensibilidad del detector: el umbral de "silencio" es el piso de ruido del propio video + este margen. |
+| `MULETILLAS` | `eh, emm, mmm, este, o sea, tipo, digamos` | Lista de muletillas a cortar. Editala a tu forma de hablar. |
+| `VENTANA_REPETICION_SEG` | `1.5` | Cuán pegada tiene que estar una repetición para considerarse un arranque en falso. |
+
+### Transcripción
+
+| Constante | Valor por defecto | Qué controla |
+|---|---|---|
+| `IDIOMA_WHISPER` | `"es"` | Idioma del habla. **Está pensado para español**: la lista de muletillas también lo está. |
+| `MODELO_WHISPER` | `"small"` | Tamaño del modelo. `"base"` gasta menos RAM; `"medium"` transcribe mejor pero es más lento. |
+| `DEVICE_WHISPER` / `COMPUTE_TYPE_WHISPER` | `"cpu"` / `"int8"` | Con GPU NVIDIA se puede usar `"cuda"` y `"float16"`. |
+
+### Subtítulos
+
+| Constante | Valor por defecto | Qué controla |
+|---|---|---|
+| `FUENTE_SUBTITULOS` | ver nota | **Tipografía. Cambiala por una que tengas instalada** (por ejemplo `"Arial"` o `"DejaVu Sans"`). |
+| `MAX_PALABRAS_POR_CAPTION` | `1` | Palabras por subtítulo (1 = palabra por palabra, estilo Reels). |
+| `FRACCION_TAMANO_FUENTE` | `0.075` | Tamaño de la letra como fracción del alto del video. |
+| `FRACCION_MARGEN_INFERIOR` | `0.20` | Distancia al borde de abajo (deja libre la zona de la interfaz de Instagram). |
+| `ESCALA_VERTICAL_SUBTITULOS` / `TRACKING_SUBTITULOS` | `125` / `-8` | Estiran la letra a lo alto y juntan las letras. |
+
+> **Sobre la fuente:** el valor por defecto apunta a una tipografía comercial que **no se distribuye con este repositorio**. Si no la tenés instalada, el render usa la fuente por defecto del sistema. Para tener un resultado consistente, elegí una fuente que tengas y poné su nombre en `FUENTE_SUBTITULOS`. Si la fuente que usás tiene licencia propia, respetala.
+
+### Calidad y velocidad del render
+
+| Constante | Por defecto | Qué controla |
+|---|---|---|
+| `PRESET_SEGMENTO` / `CRF_SEGMENTO` | `ultrafast` / `18` | Codificación de los tramos intermedios (se borran al terminar). |
+| `PRESET_FINAL` / `CRF_FINAL` | `veryfast` / `21` | Codificación del video final. **Esta define la calidad real del archivo que publicás.** Para más calidad: preset `medium` y CRF `18` (más lento). |
+
+---
+
+## Cómo funciona por dentro
+
+Un solo programa (`src/main.py`) hace de vigilante y de procesador: escanea, procesa y vuelve a escanear. No hay un proceso separado que observe la carpeta.
+
+| Módulo | Qué hace |
+|---|---|
+| `main.py` | El bucle principal y la orquestación del pipeline. Maneja `Ctrl+C`/`SIGTERM` terminando limpio. |
+| `scanner.py` | Elige el próximo video de `Crudos/` y confirma que el archivo esté **estable** (dos chequeos de tamaño) para no agarrar uno a medio copiar. |
+| `transcription.py` | Extrae el audio a WAV mono 16 kHz y transcribe con faster-whisper. **Carga el modelo y lo libera por cada video** para no acumular memoria de uno al siguiente. |
+| `silence_detector.py` | Detección de silencios sobre el audio con numpy. Usa un **umbral adaptativo**: el piso de ruido propio del video (percentil 10 del volumen, con un techo) más un margen, acotado a un rango. |
+| `repetition_detector.py` | Muletillas por lista y repeticiones por n-gramas exactos (2 a 6 palabras) casi pegados. **Sin IA extra: son reglas.** |
+| `cut_manager.py` | Convierte cortes en **tramos a conservar**; fusiona cortes muy cercanos; asegura el tramo mínimo; y traduce tiempos de la línea original a la línea ya cortada (`remapear_intervalo`). Es el módulo central. |
+| `subtitle_generator.py` | Remapea las palabras al video cortado, las agrupa en captions y escribe el `.ass`. |
+| `video_processor.py` | Todo lo de `ffmpeg`: corte por tramos, concatenación y quemado de subtítulos. |
+| `validator.py` | Chequeos del archivo final (ver abajo). |
+| `file_manager.py` | La coreografía segura de entregar a `Listos/` y recién entonces borrar el original. |
+| `logger.py` | Log de texto + `Logs/estado.json` (escritura atómica) que lee `ver_estado.py`. |
+
+### Decisiones de diseño que vale la pena conocer
+
+- **Los cortes de silencio se basan en el volumen real, no en los tiempos de Whisper.** Whisper suele estirar el final de cada palabra hasta el inicio de la siguiente, "tragándose" la pausa del medio. Si el detector de volumen dice que ahí no hay sonido, no hay palabra que proteger. Un margen en cada borde es la única protección necesaria.
+- **Nunca se fusionan dos cortes si en el medio empieza una palabra.** Fusionar borraría lo que queda adentro; se prefiere un tramo corto antes que perder algo que se dijo.
+- **Un tramo con palabras pero demasiado corto se ensancha** (devolviéndole un poco de silencio al video) en vez de descartarse.
+- **El corte se hace tramo por tramo a su propio archivo**, con `-ss` antes del `-i`, y después se unen **sin recodificar** (`concat` con `-c copy`). Un único filtro gigante con un `trim` por tramo hacía que `ffmpeg` gastara mucha más memoria de la esperada. Es la razón por la que corre bien en máquinas modestas.
+- **No se asume una tasa de cuadros constante.** Los celulares graban con *frame rate* variable; cortar con `select+setpts` asumiéndola constante produce desincronización de audio y video. Acá el video y el audio se cortan con el mismo intervalo.
+- **Solo la pasada final recodifica con calidad real.** Los tramos intermedios se codifican rápido (`ultrafast`) y se descartan.
+- **Los subtítulos son remapeados, no re-transcritos:** las palabras de la transcripción se trasladan a los tiempos ya cortados, y una palabra que ya no está en el video final no genera subtítulo.
+- **Las muletillas se cortan siempre que aparezcan en la lista**, sin exigir una pausa alrededor (Whisper casi nunca deja timestamps con esa separación limpia). El costo: "este" y "tipo" también son palabras reales y a veces se corta un uso legítimo. Si te molesta, sacalas de `MULETILLAS`.
+
+### Cómo se valida el resultado
+
+Antes de entregar, `validator.py` corre estos chequeos de menor a mayor costo y se detiene en el primero que falla:
+
+1. El archivo existe y pesa más de 10 KB.
+2. `ffprobe` lo abre y tiene stream de **video y de audio**.
+3. La **duración real coincide con la esperada** (la suma de los tramos). La tolerancia **escala con la cantidad de tramos** (`0,15 s + 0,02 s por tramo`), porque el redondeo a nivel de cuadro de cada corte se acumula: una tolerancia fija fallaba en videos con muchos cortes sin que hubiera nada mal.
+4. Se decodifica completo con `ffmpeg` **sin un solo error**.
+
+---
+
+## Límites conocidos
+
+- **Español primero.** El idioma y la lista de muletillas vienen configurados para español; para otro idioma hay que cambiar `IDIOMA_WHISPER` y `MULETILLAS`.
+- **Un video a la vez.** No hay procesamiento en paralelo (es a propósito: cuida la memoria).
+- **Está pensado para una persona hablando a cámara.** No es un editor general: no hace transiciones, música, zoom ni B-roll.
+- **Los subtítulos y los cortes se ajustan a gusto.** Los valores por defecto salen de uso real, pero cada voz y cada micrófono son distintos: probá con un video corto y ajustá `config.py`.
+- **La transcripción puede equivocarse** en nombres propios, jerga o audio con mucho ruido, y esos errores pasan a los subtítulos. Revisá el resultado antes de publicar.
+- **El render es lento en CPU.** Depende mucho de la máquina y del largo del video.
+
+## Solución de problemas
+
+| Síntoma | Qué mirar |
+|---|---|
+| Dejo un video y no pasa nada | ¿Existe la carpeta `Crudos/`? (hay que crearla a mano). ¿La extensión es `.mp4`, `.mov`, `.mkv` o `.avi`? ¿Está corriendo `python src/main.py`? |
+| `ffmpeg` / `ffprobe` "not found" | No están en el `PATH`. Instalalos y volvé a abrir la terminal. |
+| El video terminó en `Crudos/fallidos/` | Abrí `Logs/editor_gianni.log`: la línea con `ERROR` dice por qué. |
+| "la transcripción no devolvió ninguna palabra" | El audio está vacío o no se entiende. Revisá que el video tenga voz. |
+| Los subtítulos salen con una letra que no es la que quería | Cambiá `FUENTE_SUBTITULOS` por una fuente instalada. |
+| Corta demasiado / se siente "apurado" | Subí `DURACION_MINIMA_SILENCIO_MS` y/o `MARGEN_SILENCIO_MS`. |
+| Quedan silencios largos | Bajá `DURACION_MINIMA_SILENCIO_MS` o subí `MARGEN_DB_SOBRE_PISO`. |
+| Corta voz baja como si fuera silencio | Bajá `MARGEN_DB_SOBRE_PISO`. |
+| Se queda sin memoria | Usá `MODELO_WHISPER = "base"` y, en el servicio, `MemoryMax`. |
+
+## Estructura del repositorio
+
+```
+gianni-edit/
+├── src/
+│   ├── main.py                  # bucle principal + pipeline
+│   ├── config.py                # TODA la configuración ajustable
+│   ├── scanner.py               # elige y estabiliza el próximo video
+│   ├── transcription.py         # audio + faster-whisper
+│   ├── silence_detector.py      # silencios por volumen (umbral adaptativo)
+│   ├── repetition_detector.py   # muletillas y repeticiones
+│   ├── cut_manager.py           # cortes -> tramos + remapeo de tiempos
+│   ├── subtitle_generator.py    # captions + archivo .ass
+│   ├── video_processor.py       # ffmpeg: cortar, unir, quemar subtítulos
+│   ├── validator.py             # chequeos del resultado
+│   ├── file_manager.py          # entrega segura a Listos/
+│   └── logger.py                # log + estado.json
+├── ver_estado.py                # ver el progreso en vivo
+├── requirements.txt
+├── LICENSE
+└── README.md
+```
+
+Carpetas que se crean al usarlo (ignoradas por git): `Crudos/`, `Crudos/fallidos/`, `Listos/`, `Temp/`, `Logs/`.
 
 ## Estado del proyecto
 
-Activo, en maduración. La validación automática pasa en todos los casos probados, pero todavía no hay una revisión humana exhaustiva de la sensación final de los cortes y subtítulos en un video real de punta a punta — tratalo como beta, no como producto terminado.
+Activo y en uso real. La validación automática pasa en todos los casos probados con videos reales de celular. Como cualquier herramienta que decide qué cortar, **conviene mirar el resultado antes de publicarlo**, sobre todo los primeros videos, hasta ajustar `config.py` a tu voz.
 
-Se agradecen issues y PRs.
+Se agradecen issues y pull requests. Si abrís un issue, incluí el fragmento relevante de `Logs/editor_gianni.log`.
 
 ## Licencia
 
-MIT — ver `LICENSE`.
+MIT — ver [`LICENSE`](LICENSE).

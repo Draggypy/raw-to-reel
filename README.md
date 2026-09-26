@@ -27,52 +27,127 @@ Pensado para contenido vertical tipo **Reels, TikTok y Stories de Instagram**.
 5. **Corta y quema los subtítulos** con `ffmpeg`.
 6. **Valida** el resultado. Solo si pasa todos los chequeos se entrega a `Listos/`; si no, el video va a `Crudos/fallidos/` y el original queda intacto.
 
-## Requisitos
+## Requisitos y Especificaciones Técnicas
 
-| Necesitás | Notas |
+| Requisito | Detalle / Especificación |
 |---|---|
-| **Python 3** reciente | Desarrollado y probado con Python 3.12. Las versiones fijadas en `requirements.txt` pueden exigir un Python reciente. |
-| **ffmpeg** (con `ffprobe` y soporte de subtítulos `libass`) | Tiene que estar en el `PATH`. La mayoría de los paquetes de las distribuciones lo traen. |
-| **Espacio libre en disco** | Para el modelo de transcripción (se descarga solo la primera vez, alrededor de medio GB para `small`) y para los temporales del render, que pesan del orden del video que estés procesando. |
-| **Una CPU razonable** | Por defecto usa CPU (`int8`), no necesita GPU. |
+| **Python** | Python 3.10 o superior (desarrollado y probado a fondo en **Python 3.12**). |
+| **FFmpeg** | Versión 5.0+ con `ffprobe` y soporte nativo compilado de `libass` (para subtítulos). |
+| **Sistemas operativos** | **Linux** (x86_64, aarch64), **Windows 10 / 11** (64-bit), **macOS** (Apple Silicon M1/M2/M3 e Intel). |
+| **Hardware** | Corre 100% en **CPU** (cuantización `int8`). No requiere GPU dedicada, aunque soporta aceleración NVIDIA CUDA si se configura en `config.py`. |
+| **Memoria RAM** | Mínimo 4 GB de RAM libre (recomendado 8 GB). |
+| **Almacenamiento** | ~500 MB libres para el modelo local de Whisper (se descarga una sola vez al primer inicio) + espacio temporal proporcional al video a procesar. |
 
-**Sistema operativo:** compatible con **Linux**, **Windows** y **macOS**.
+---
 
-## Instalación
+## Instalación paso a paso
+
+Elegí tu sistema operativo y ejecutá los siguientes comandos en tu terminal:
+
+### 🐧 Linux (Ubuntu, Debian, Linux Mint, Pop!_OS)
 
 ```bash
-# 1. Clonar el repo
+# 1. Instalar dependencias del sistema (Python, Git y FFmpeg con libass)
+sudo apt update
+sudo apt install -y python3 python3-venv git ffmpeg
+
+# 2. Clonar el repositorio y entrar a la carpeta
 git clone https://github.com/Draggypy/raw-to-reel.git
 cd raw-to-reel
 
-# 2. Entorno virtual + dependencias
+# 3. Crear y activar el entorno virtual
 python3 -m venv venv
-source venv/bin/activate          # en Windows: venv\Scripts\activate
+source venv/bin/activate
+
+# 4. Instalar las dependencias de Python
+pip install --upgrade pip
 pip install -r requirements.txt
 
-# 3. ffmpeg (si no lo tenés)
-sudo apt install ffmpeg           # Debian/Ubuntu/Mint
-# winget install Gyan.FFmpeg      # Windows (PowerShell)
-# brew install ffmpeg             # macOS
+# 5. Crear la carpeta para los videos crudos
+mkdir -p Crudos
+```
 
-# 4. Crear la carpeta donde vas a dejar los videos
+> **Arch Linux:** `sudo pacman -S python git ffmpeg`  
+> **Fedora:** `sudo dnf install -y python3 git ffmpeg-free`
+
+---
+
+### 🪟 Windows (10 y 11)
+
+Abrí una terminal de **PowerShell** (o Windows Terminal):
+
+```powershell
+# 1. Instalar FFmpeg (usando el gestor oficial de paquetes de Windows)
+winget install Gyan.FFmpeg
+
+# IMPORTANTE: Cerrá y volvé a abrir PowerShell para que tome FFmpeg en el PATH del sistema.
+# Verificá con: ffmpeg -version
+
+# 2. Clonar el repositorio y entrar a la carpeta
+git clone https://github.com/Draggypy/raw-to-reel.git
+cd raw-to-reel
+
+# 3. Crear y activar el entorno virtual
+python -m venv venv
+.\venv\Scripts\Activate.ps1
+# Nota: Si PowerShell restringe la ejecución de scripts, permitila con:
+# Set-ExecutionPolicy -Scope CurrentUser RemoteSigned
+
+# 4. Instalar las dependencias
+python -m pip install --upgrade pip
+pip install -r requirements.txt
+
+# 5. Crear la carpeta para tus videos crudos
 mkdir Crudos
 ```
 
-Verificá que `ffmpeg` y `ffprobe` respondan:
+---
+
+### 🍎 macOS (Apple Silicon M1/M2/M3 / Intel)
+
+Abrí la **Terminal**:
 
 ```bash
-ffmpeg -version && ffprobe -version
+# 1. Instalar dependencias con Homebrew (si no tenés Homebrew: https://brew.sh)
+brew install ffmpeg python git
+
+# 2. Clonar el repositorio y entrar a la carpeta
+git clone https://github.com/Draggypy/raw-to-reel.git
+cd raw-to-reel
+
+# 3. Crear y activar el entorno virtual
+python3 -m venv venv
+source venv/bin/activate
+
+# 4. Instalar las dependencias de Python
+pip install --upgrade pip
+pip install -r requirements.txt
+
+# 5. Crear la carpeta para los videos crudos
+mkdir -p Crudos
 ```
 
-> **No hace falta configurar rutas.** Las carpetas de trabajo se calculan solas a partir de donde está el proyecto (`Crudos/`, `Listos/`, `Temp/`, `Logs/`). Solo `Crudos/` tenés que crearla vos; el resto se crea automáticamente al primer uso.
+---
+
+### Verificación de la instalación
+
+Para comprobar que todo tu entorno (FFmpeg, Whisper y dependencias) quedó configurado y funcionando al 100%, podés ejecutar la suite de pruebas automatizada:
+
+```bash
+python -m unittest tests/test_core.py -v
+```
+
+Si todo está en orden, verás las 8 pruebas pasando con `OK`.
+
+> **No hace falta configurar rutas.** Las carpetas de trabajo se calculan automáticamente a partir de donde está el proyecto (`Crudos/`, `Listos/`, `Temp/`, `Logs/`). Solo `Crudos/` tenés que crearla vos; el resto se crea solo al primer uso.
 
 ## Cómo se usa
 
 ### Uso básico
 
 ```bash
-source venv/bin/activate
+# Activar el entorno virtual (si no está activo)
+source venv/bin/activate          # en Windows: .\venv\Scripts\Activate.ps1
 python src/main.py
 ```
 
@@ -106,15 +181,15 @@ El historial completo queda en `Logs/editor_gianni.log` (una línea con fecha po
 
 ### Dejarlo corriendo siempre (Linux, systemd)
 
-Si querés que arranque con la máquina y procese solo lo que dejes en `Crudos/`, podés usar un servicio de usuario. Ejemplo (`~/.config/systemd/user/gianni-edit.service`), ajustando las rutas:
+Si querés que arranque con la máquina y procese solo lo que dejes en `Crudos/`, podés usar un servicio de usuario. Ejemplo (`~/.config/systemd/user/raw-to-reel.service`), ajustando las rutas:
 
 ```ini
 [Unit]
-Description=Gianni Edit
+Description=RawToReel - Editor automático de video
 
 [Service]
-WorkingDirectory=/ruta/a/gianni-edit
-ExecStart=/ruta/a/gianni-edit/venv/bin/python /ruta/a/gianni-edit/src/main.py
+WorkingDirectory=/ruta/a/raw-to-reel
+ExecStart=/ruta/a/raw-to-reel/venv/bin/python /ruta/a/raw-to-reel/src/main.py
 Restart=on-failure
 # Recomendado en máquinas chicas: que no acapare recursos
 Nice=15
@@ -127,8 +202,8 @@ WantedBy=default.target
 
 ```bash
 systemctl --user daemon-reload
-systemctl --user enable --now gianni-edit.service
-systemctl --user status gianni-edit.service
+systemctl --user enable --now raw-to-reel.service
+systemctl --user status raw-to-reel.service
 ```
 
 > **Ojo si mudás la carpeta del proyecto:** hay que actualizar las rutas del `.service` y correr `daemon-reload` + `restart`. Si no, el servicio sigue "activo" pero mirando una carpeta vieja y no procesa nada.
@@ -252,7 +327,10 @@ Antes de entregar, `validator.py` corre estos chequeos de menor a mayor costo y 
 ## Estructura del repositorio
 
 ```
-gianni-edit/
+raw-to-reel/
+├── .github/
+│   └── workflows/
+│       └── test-windows.yml     # CI automatizado en Windows Server
 ├── src/
 │   ├── main.py                  # bucle principal + pipeline
 │   ├── config.py                # TODA la configuración ajustable
@@ -266,6 +344,8 @@ gianni-edit/
 │   ├── validator.py             # chequeos del resultado
 │   ├── file_manager.py          # entrega segura a Listos/
 │   └── logger.py                # log + estado.json
+├── tests/
+│   └── test_core.py             # suite de pruebas unitarias y de integración
 ├── ver_estado.py                # ver el progreso en vivo
 ├── requirements.txt
 ├── LICENSE
@@ -274,11 +354,30 @@ gianni-edit/
 
 Carpetas que se crean al usarlo (ignoradas por git): `Crudos/`, `Crudos/fallidos/`, `Listos/`, `Temp/`, `Logs/`.
 
-## Estado del proyecto
+---
 
-Activo y en uso real. La validación automática pasa en todos los casos probados con videos reales de celular. Como cualquier herramienta que decide qué cortar, **conviene mirar el resultado antes de publicarlo**, sobre todo los primeros videos, hasta ajustar `config.py` a tu voz.
+## 🚧 Estado del proyecto: En desarrollo y maduración continua
 
-Se agradecen issues y pull requests. Si abrís un issue, incluí el fragmento relevante de `Logs/editor_gianni.log`.
+> [!NOTE]
+> **RawToReel es un proyecto en desarrollo activo y proceso constante de maduración.**  
+> El motor ya es totalmente funcional, estable y se utiliza para procesar videos verticales reales. Al ser un software que evoluciona continuamente con el uso, **periódicamente se irán publicando actualizaciones** con mejoras de velocidad, afinación en la detección de pausas y muletillas, soporte de nuevos formatos y más opciones de estilo.
+
+### Cómo actualizar a la última versión
+
+Para actualizar tu copia local a la versión más reciente en cualquier momento:
+
+```bash
+git pull origin master
+pip install -r requirements.txt --upgrade
+```
+
+### Feedback y sugerencias
+
+Al estar en pleno crecimiento, **el feedback y los reportes de la comunidad son clave**:
+* Si encontrás un corte que no quedó como esperabas o una palabra que se comportó de forma extraña, abrí un [**Issue**](https://github.com/Draggypy/raw-to-reel/issues) en GitHub incluyendo el fragmento relevante de `Logs/editor_gianni.log`.
+* ¡Las sugerencias, ideas y Pull Requests son muy bienvenidas para seguir madurando el proyecto!
+
+---
 
 ## Licencia
 

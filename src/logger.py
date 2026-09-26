@@ -1,6 +1,6 @@
-"""Logging simple: una línea con timestamp por evento a un archivo de texto
-en Logs/, más un estado.json liviano para ver el progreso en vivo sin
-necesitar cargar dependencias pesadas para mirarlo.
+"""Simple logging: one timestamped line per event to a text file in Logs/,
+plus a lightweight status.json to watch progress live without needing to
+load heavy dependencies just to look at it.
 """
 
 import json
@@ -9,29 +9,29 @@ from typing import Optional
 
 import config
 
-ARCHIVO_LOG = config.LOGS / "editor_gianni.log"
-ARCHIVO_ESTADO = config.LOGS / "estado.json"
+LOG_FILE = config.LOGS / "rawtoreel.log"
+STATUS_FILE = config.LOGS / "status.json"
 
 
-def log(mensaje: str) -> None:
+def log(message: str) -> None:
     config.LOGS.mkdir(parents=True, exist_ok=True)
-    linea = f"[{time.strftime('%Y-%m-%d %H:%M:%S')}] {mensaje}\n"
-    with ARCHIVO_LOG.open("a", encoding="utf-8") as f:
-        f.write(linea)
-    print(linea, end="")
+    line = f"[{time.strftime('%Y-%m-%d %H:%M:%S')}] {message}\n"
+    with LOG_FILE.open("a", encoding="utf-8") as f:
+        f.write(line)
+    print(line, end="")
 
 
-def actualizar_estado(video: Optional[str], etapa: str) -> None:
-    """Escritura atómica (escribe a un temporal y renombra) para que un
-    lector externo nunca encuentre el archivo a medio escribir."""
+def update_status(video: Optional[str], stage: str) -> None:
+    """Atomic write (writes to a temp file and renames it) so an external
+    reader never finds the file mid-write."""
     config.LOGS.mkdir(parents=True, exist_ok=True)
-    datos = {
+    data = {
         "video": video,
-        "etapa": etapa,
-        "actualizado": time.strftime("%Y-%m-%d %H:%M:%S"),
+        "stage": stage,
+        "updated": time.strftime("%Y-%m-%d %H:%M:%S"),
     }
-    temporal = ARCHIVO_ESTADO.with_suffix(".tmp")
-    temporal.write_text(
-        json.dumps(datos, ensure_ascii=False, indent=2), encoding="utf-8"
+    temp = STATUS_FILE.with_suffix(".tmp")
+    temp.write_text(
+        json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8"
     )
-    temporal.replace(ARCHIVO_ESTADO)
+    temp.replace(STATUS_FILE)

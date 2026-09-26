@@ -1,11 +1,11 @@
-"""Validación completa del archivo generado, antes de aprobarlo para
-Listos/. Los chequeos van de más barato a más caro y se detienen en el
-primer fallo. Si falla cualquiera, el video NO se aprueba y el original
-en Crudos/ no se toca -- ver file_manager.py.
+"""Full validation of the generated file, before approving it for Ready/.
+Checks go from cheapest to most expensive and stop at the first failure.
+If any of them fails, the video is NOT approved and the original in Raw/
+is left untouched -- see file_manager.py.
 
-Nota: que ffmpeg haya terminado con código de salida 0 ya lo garantiza
-video_processor.cortar_video() (lanza una excepción si no) -- si eso
-falla, nunca se llega a llamar a validar() con un archivo para revisar.
+Note: that ffmpeg finished with exit code 0 is already guaranteed by
+video_processor.cut_video() (it raises an exception if not) -- if that
+fails, validate() is never even called with a file to check.
 """
 
 import subprocess
@@ -14,89 +14,90 @@ from pathlib import Path
 from typing import List, Optional
 
 import config
-from cut_manager import Tramo
+from cut_manager import Segment
 
 
 @dataclass
-class ResultadoValidacion:
+class ValidationResult:
     ok: bool
-    motivo: Optional[str] = None
+    reason: Optional[str] = None
 
 
-def _existe_y_pesa_algo(video: Path) -> ResultadoValidacion:
+def _exists_and_has_size(video: Path) -> ValidationResult:
     if not video.exists():
-        return ResultadoValidacion(False, "el archivo no existe")
-    if video.stat().st_size < config.TAMANO_MINIMO_BYTES:
-        return ResultadoValidacion(False, f"pesa sólo {video.stat().st_size} bytes, sospechosamente poco")
-    return ResultadoValidacion(True)
+        return ValidationResult(False, "the file doesn't exist")
+    if video.stat().st_size < config.MIN_SIZE_BYTES:
+        return ValidationResult(False, f"only weighs {video.stat().st_size} bytes, suspiciously little")
+    return ValidationResult(True)
 
 
-def _ffprobe_abre_con_streams(video: Path) -> ResultadoValidacion:
-    comando = [
+def _ffprobe_opens_with_streams(video: Path) -> ValidationResult:
+    command = [
         "ffprobe", "-v", "error", "-show_entries", "stream=codec_type",
         "-of", "csv=p=0", str(video),
     ]
-    resultado = subprocess.run(comando, capture_output=True, text=True)
-    if resultado.returncode != 0:
-        return ResultadoValidacion(False, f"ffprobe no pudo abrir el archivo: {resultado.stderr.strip()}")
+    result = subprocess.run(command, capture_output=True, text=True)
+    if result.returncode != 0:
+        return ValidationResult(False, f"ffprobe couldn't open the file: {result.stderr.strip()}")
 
-    # ffprobe agrega una coma final de más en la línea de un stream con
-    # SIDE_DATA (p. ej. metadata de rotación, muy común en HEVC de celular)
-    # -- se saca antes de comparar, si no un video real cualquiera con esa
-    # metadata falla acá por error, no porque le falte el stream de video.
-    tipos = [linea.rstrip(",") for linea in resultado.stdout.strip().splitlines()]
-    if "video" not in tipos:
-        return ResultadoValidacion(False, "no tiene stream de video")
-    if "audio" not in tipos:
-        return ResultadoValidacion(False, "no tiene stream de audio")
-    return ResultadoValidacion(True)
+    # ffprobe adds an extra trailing comma on the line of a stream with
+    # SIDE_DATA (e.g. rotation metadata, very common in phone HEVC) -- it's
+    # stripped before comparing, otherwise any real video with that
+    # metadata would fail here on a technicality, not because it's
+    # actually missing the video stream.
+    types = [line.rstrip(",") for line in result.stdout.strip().splitlines()]
+    if "video" not in types:
+        return ValidationResult(False, "has no video stream")
+    if "audio" not in types:
+        return ValidationResult(False, "has no audio stream")
+    return ValidationResult(True)
 
 
-def _duracion_esperada(video: Path, tramos: List[Tramo]) -> ResultadoValidacion:
-    duracion_esperada = sum(t.duracion for t in tramos)
-    comando = [
+def _expected_duration(video: Path, segments: List[Segment]) -> ValidationResult:
+    expected_duration = sum(s.duration for s in segments)
+    command = [
         "ffprobe", "-v", "error", "-show_entries", "format=duration",
         "-of", "csv=p=0", str(video),
     ]
-    resultado = subprocess.run(comando, capture_output=True, text=True)
-    if resultado.returncode != 0 or not resultado.stdout.strip():
-        return ResultadoValidacion(False, "no se pudo leer la duración de salida")
+    result = subprocess.run(command, capture_output=True, text=True)
+    if result.returncode != 0 or not result.stdout.strip():
+        return ValidationResult(False, "could not read the output duration")
 
-    duracion_real = float(resultado.stdout.strip())
-    diferencia = abs(duracion_real - duracion_esperada)
-    tolerancia = (
-        config.TOLERANCIA_DURACION_BASE_SEG
-        + len(tramos) * config.TOLERANCIA_DURACION_POR_TRAMO_SEG
+    real_duration = float(result.stdout.strip())
+    difference = abs(real_duration - expected_duration)
+    tolerance = (
+        config.DURATION_TOLERANCE_BASE_SEC
+        + len(segments) * config.DURATION_TOLERANCE_PER_SEGMENT_SEC
     )
-    if diferencia > tolerancia:
-        return ResultadoValidacion(
+    if difference > tolerance:
+        return ValidationResult(
             False,
-            f"duración esperada {duracion_esperada:.2f}s, la real es {duracion_real:.2f}s "
-            f"(diferencia {diferencia:.2f}s, tolerancia {tolerancia:.2f}s para {len(tramos)} tramos)",
+            f"expected duration {expected_duration:.2f}s, real is {real_duration:.2f}s "
+            f"(difference {difference:.2f}s, tolerance {tolerance:.2f}s for {len(segments)} segments)",
         )
-    return ResultadoValidacion(True)
+    return ValidationResult(True)
 
 
-def _decodifica_sin_errores(video: Path) -> ResultadoValidacion:
-    comando = ["ffmpeg", "-v", "error", "-i", str(video), "-f", "null", "-"]
-    resultado = subprocess.run(comando, capture_output=True, text=True)
-    if resultado.returncode != 0 or resultado.stderr.strip():
-        return ResultadoValidacion(False, f"errores decodificando: {resultado.stderr.strip()[:500]}")
-    return ResultadoValidacion(True)
+def _decodes_without_errors(video: Path) -> ValidationResult:
+    command = ["ffmpeg", "-v", "error", "-i", str(video), "-f", "null", "-"]
+    result = subprocess.run(command, capture_output=True, text=True)
+    if result.returncode != 0 or result.stderr.strip():
+        return ValidationResult(False, f"errors decoding: {result.stderr.strip()[:500]}")
+    return ValidationResult(True)
 
 
-def validar(video: Path, tramos: List[Tramo]) -> ResultadoValidacion:
-    """Corre todos los chequeos, del más barato al más caro, y se detiene
-    en el primero que falla. Sólo si todos pasan se puede mover a
-    Listos/."""
-    chequeos = [
-        lambda: _existe_y_pesa_algo(video),
-        lambda: _ffprobe_abre_con_streams(video),
-        lambda: _duracion_esperada(video, tramos),
-        lambda: _decodifica_sin_errores(video),
+def validate(video: Path, segments: List[Segment]) -> ValidationResult:
+    """Runs every check, from cheapest to most expensive, and stops at the
+    first one that fails. Only if all of them pass can it be moved to
+    Ready/."""
+    checks = [
+        lambda: _exists_and_has_size(video),
+        lambda: _ffprobe_opens_with_streams(video),
+        lambda: _expected_duration(video, segments),
+        lambda: _decodes_without_errors(video),
     ]
-    for chequeo in chequeos:
-        resultado = chequeo()
-        if not resultado.ok:
-            return resultado
-    return ResultadoValidacion(True)
+    for check in checks:
+        result = check()
+        if not result.ok:
+            return result
+    return ValidationResult(True)

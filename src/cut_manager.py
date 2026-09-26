@@ -1,235 +1,236 @@
-"""Consolida los cortes candidatos (silencios, muletillas y repeticiones)
-en la lista final de tramos a CONSERVAR del video.
+"""Consolidates the candidate cuts (silences, filler words, and
+repetitions) into the final list of segments to KEEP from the video.
 
-Dos cortes demasiado cercanos se fusionan, para no dejar entre ellos un
-tramo conservado tan corto que se vea como un flash de escena -- pero
-nunca si en el medio hay una palabra, porque fusionar borra lo que queda
-adentro.
+Two cuts that are too close together get merged, so as not to leave a
+kept segment between them so short it looks like a scene flash -- but
+never if a word starts in between, because merging would delete whatever
+is left in there.
 """
 
 from dataclasses import dataclass
 from typing import List, Optional, Sequence, Tuple
 
 import config
-from silence_detector import Silencio
-from transcription import Palabra
+from silence_detector import Silence
+from transcription import Word
 
 
 @dataclass
-class Corte:
-    inicio: float
-    fin: float
+class Cut:
+    start: float
+    end: float
 
 
 @dataclass
-class Tramo:
-    inicio: float
-    fin: float
+class Segment:
+    start: float
+    end: float
 
     @property
-    def duracion(self) -> float:
-        return self.fin - self.inicio
+    def duration(self) -> float:
+        return self.end - self.start
 
 
-def _termina_frase(palabras_ordenadas: List[Palabra], instante: float) -> bool:
-    """True si la última palabra que arranca antes de `instante` cierra
-    una frase según la puntuación de Whisper (o si no hay ninguna palabra
-    antes: el arranque del video se trata como aire muerto)."""
-    ultima = None
-    for p in palabras_ordenadas:
-        if p.inicio >= instante:
+def _ends_sentence(sorted_words: List[Word], instant: float) -> bool:
+    """True if the last word starting before `instant` closes a sentence
+    according to Whisper's punctuation (or if there's no word before it:
+    the start of the video is treated as dead air)."""
+    last = None
+    for w in sorted_words:
+        if w.start >= instant:
             break
-        ultima = p
-    if ultima is None:
+        last = w
+    if last is None:
         return True
-    texto = ultima.texto.rstrip("\"'»)]")
-    return bool(texto) and texto[-1] in config.PUNTUACION_FIN_DE_FRASE
+    text = last.text.rstrip("\"'»)]")
+    return bool(text) and text[-1] in config.SENTENCE_END_PUNCTUATION
 
 
-def cortes_desde_silencios(
-    silencios: List[Silencio], palabras: Sequence[Palabra] = ()
-) -> List[Corte]:
-    """El corte real es más angosto que el silencio detectado: deja un
-    margen de buffer en cada borde para no comerse el final o el comienzo
-    de una palabra.
+def cuts_from_silences(
+    silences: List[Silence], words: Sequence[Word] = ()
+) -> List[Cut]:
+    """The real cut is narrower than the detected silence: it leaves a
+    buffer margin on each edge so as not to eat into the end or start of a
+    word.
 
-    Reglas:
-    - Pausa ENTRE frases (la palabra anterior termina en . ? ! ...): se
-      corta con MARGEN_SILENCIO_MS. Pausa DENTRO de una frase: es ritmo
-      del habla, no aire muerto; sólo se corta si dura al menos
-      PAUSA_MINIMA_DENTRO_DE_FRASE_MS y se deja MARGEN_DENTRO_DE_FRASE_MS
-      a cada lado para que la pausa siga existiendo.
-    - Si Whisper transcribió una palabra que ARRANCA dentro del silencio,
-      ahí hay voz baja que el volumen no registró: el corte se recorta
-      para terminar un margen antes de ese inicio. Sólo se miran inicios
-      de palabra, nunca finales: Whisper estira el `fin` de cada palabra
-      hasta donde arranca la siguiente, así que se traga la pausa del
-      medio. Una versión anterior protegía palabras completas (inicio y
-      fin) y descartaba casi todos los cortes reales -- medido en un video
-      real: de 20 silencios detectados casi ninguno se cortaba, y quedaban
-      9.4s de silencio en 35s de video.
-    - Un corte que ahorra menos de CORTE_MINIMO_MS se descarta: es un
-      salto visual (la cabeza se mueve, el audio hace "clic") a cambio de
-      nada. Con margen 150 y silencio mínimo 300, una pausa de 320ms
-      generaba un corte de 20ms -- esos micro-cortes se sentían como que
-      "de la nada corta" en medio de una frase."""
-    margen_entre_frases = config.MARGEN_SILENCIO_MS / 1000
-    margen_dentro_de_frase = config.MARGEN_DENTRO_DE_FRASE_MS / 1000
-    pausa_minima_dentro_de_frase = config.PAUSA_MINIMA_DENTRO_DE_FRASE_MS / 1000
-    corte_minimo = config.CORTE_MINIMO_MS / 1000
-    palabras_ordenadas = sorted(palabras, key=lambda p: p.inicio)
+    Rules:
+    - Pause BETWEEN sentences (the previous word ends in . ? ! ...): cut
+      with SILENCE_MARGIN_MS. Pause WITHIN a sentence: it's speech rhythm,
+      not dead air; it's only cut if it lasts at least
+      MIN_MIDSENTENCE_PAUSE_MS, leaving MIDSENTENCE_MARGIN_MS on each side
+      so the pause keeps existing.
+    - If Whisper transcribed a word that STARTS inside the silence,
+      there's soft voice there that volume didn't register: the cut is
+      trimmed to end a margin before that start. Only word starts are
+      looked at, never endings: Whisper stretches a word's `end` up to
+      where the next one starts, so it swallows the pause in between. An
+      earlier version protected whole words (start and end) and discarded
+      almost every real cut -- measured on a real video: out of 20
+      detected silences almost none got cut, leaving 9.4s of silence in a
+      35s video.
+    - A cut that saves less than MIN_CUT_MS is discarded: it's a visual
+      jump (the head moves, the audio makes a "click") for nothing. With a
+      150 margin and a 300 minimum silence, a 320ms pause used to produce
+      a 20ms cut -- those micro-cuts were a big part of "it cuts out of
+      nowhere" mid-sentence."""
+    between_sentences_margin = config.SILENCE_MARGIN_MS / 1000
+    midsentence_margin = config.MIDSENTENCE_MARGIN_MS / 1000
+    min_midsentence_pause = config.MIN_MIDSENTENCE_PAUSE_MS / 1000
+    min_cut = config.MIN_CUT_MS / 1000
+    sorted_words = sorted(words, key=lambda w: w.start)
 
-    cortes = []
-    for s in silencios:
-        if _termina_frase(palabras_ordenadas, s.inicio):
-            margen = margen_entre_frases
+    cuts = []
+    for s in silences:
+        if _ends_sentence(sorted_words, s.start):
+            margin = between_sentences_margin
         else:
-            if s.fin - s.inicio < pausa_minima_dentro_de_frase:
+            if s.end - s.start < min_midsentence_pause:
                 continue
-            margen = margen_dentro_de_frase
+            margin = midsentence_margin
 
-        inicio = s.inicio + margen
-        fin = s.fin - margen
-        for p in palabras_ordenadas:
-            if p.inicio >= s.fin:
+        start = s.start + margin
+        end = s.end - margin
+        for w in sorted_words:
+            if w.start >= s.end:
                 break
-            if p.inicio >= s.inicio:
-                fin = min(fin, p.inicio - margen)
+            if w.start >= s.start:
+                end = min(end, w.start - margin)
                 break
-        if fin - inicio >= corte_minimo:
-            cortes.append(Corte(inicio=inicio, fin=fin))
-    return cortes
+        if end - start >= min_cut:
+            cuts.append(Cut(start=start, end=end))
+    return cuts
 
 
-def _fusionar_cercanos(cortes: List[Corte], palabras: List[Palabra]) -> List[Corte]:
-    """Fusiona dos cortes muy pegados para no dejar entre ellos un tramo
-    conservado tan corto que se vea como un flash de escena.
+def _merge_close_cuts(cuts: List[Cut], words: List[Word]) -> List[Cut]:
+    """Merges two cuts that are very close together, so as not to leave a
+    kept segment between them so short it looks like a scene flash.
 
-    OJO: fusionar BORRA lo que quedaba en el medio. Por eso sólo se fusiona
-    si en ese hueco no arranca ninguna palabra -- si ahí hay una palabra
-    real (aunque sea corta, "sí", "no", "y"), se prefiere el tramo corto
-    antes que borrar algo que el usuario dijo. Se mira el inicio de la
-    palabra y no su fin porque Whisper estira los finales (ver
-    cortes_desde_silencios)."""
-    if not cortes:
+    WATCH OUT: merging DELETES whatever was left in between. That's why it
+    only merges if no word starts in that gap -- if there's a real word
+    there (even a short one, "yes", "no", "and"), the short segment is
+    kept instead of deleting something the user actually said. It checks
+    the word's start rather than its end because Whisper stretches word
+    endings (see cuts_from_silences)."""
+    if not cuts:
         return []
 
-    ordenados = sorted(cortes, key=lambda c: c.inicio)
-    fusionados = [Corte(ordenados[0].inicio, ordenados[0].fin)]
+    sorted_cuts = sorted(cuts, key=lambda c: c.start)
+    merged = [Cut(sorted_cuts[0].start, sorted_cuts[0].end)]
 
-    for actual in ordenados[1:]:
-        anterior = fusionados[-1]
-        hueco = actual.inicio - anterior.fin
-        hay_palabra_en_el_hueco = any(
-            anterior.fin <= p.inicio < actual.inicio for p in palabras
+    for current in sorted_cuts[1:]:
+        previous = merged[-1]
+        gap = current.start - previous.end
+        word_starts_in_gap = any(
+            previous.end <= w.start < current.start for w in words
         )
-        if hueco < config.TRAMO_MINIMO_SEG and not hay_palabra_en_el_hueco:
-            anterior.fin = max(anterior.fin, actual.fin)
+        if gap < config.MIN_SEGMENT_SEC and not word_starts_in_gap:
+            previous.end = max(previous.end, current.end)
         else:
-            fusionados.append(Corte(actual.inicio, actual.fin))
+            merged.append(Cut(current.start, current.end))
 
-    return fusionados
+    return merged
 
 
-def _tramos_conservados(cortes: List[Corte], duracion_total: float) -> List[Tramo]:
-    tramos = []
+def _kept_segments(cuts: List[Cut], total_duration: float) -> List[Segment]:
+    segments = []
     cursor = 0.0
 
-    for corte in cortes:
-        if corte.inicio > cursor:
-            tramos.append(Tramo(inicio=cursor, fin=corte.inicio))
-        cursor = max(cursor, corte.fin)
+    for cut in cuts:
+        if cut.start > cursor:
+            segments.append(Segment(start=cursor, end=cut.start))
+        cursor = max(cursor, cut.end)
 
-    if cursor < duracion_total:
-        tramos.append(Tramo(inicio=cursor, fin=duracion_total))
+    if cursor < total_duration:
+        segments.append(Segment(start=cursor, end=total_duration))
 
-    return [t for t in tramos if t.duracion > 0]
+    return [s for s in segments if s.duration > 0]
 
 
-def _asegurar_tramo_minimo(
-    tramos: List[Tramo], palabras: List[Palabra], duracion_total: float
-) -> List[Tramo]:
-    """Elimina las "escenas instantáneas": tramos conservados tan cortos
-    que se ven como un flash (se midió uno de 50 ms = un frame y medio).
+def _enforce_min_segment(
+    segments: List[Segment], words: List[Word], total_duration: float
+) -> List[Segment]:
+    """Removes "instant scenes": kept segments so short they look like a
+    flash (one measured at 50ms = a frame and a half).
 
-    Dos casos distintos:
-    - El tramo no tiene ninguna palabra: era puro relleno de márgenes (el
-      caso típico es el arranque del video, donde el margen del primer
-      silencio deja 50 ms sueltos antes del corte). Se descarta.
-    - El tramo sí tiene una palabra: no se puede tirar sin perder lo que
-      dijo, así que se ENSANCHA hacia los costados robándole tiempo al
-      silencio de al lado hasta llegar al mínimo. O sea: se le devuelve un
-      poco de silencio al video justo ahí, que es exactamente lo que hace
-      falta para que el corte no se sienta como un salto raro."""
-    minimo = config.TRAMO_MINIMO_SEG
-    resultado: List[Tramo] = []
+    Two different cases:
+    - The segment has no word in it at all: it was pure margin filler (the
+      typical case is the start of the video, where the first silence's
+      margin leaves 50ms loose before the cut). It's discarded.
+    - The segment does have a word: it can't be thrown away without
+      losing what was said, so it gets WIDENED sideways, borrowing time
+      from the silence next to it until it reaches the minimum. In other
+      words: a bit of silence is given back to the video right there,
+      which is exactly what's needed for the cut to not feel like a weird
+      jump."""
+    minimum = config.MIN_SEGMENT_SEC
+    result: List[Segment] = []
 
-    for i, t in enumerate(tramos):
-        if t.duracion >= minimo:
-            resultado.append(t)
+    for i, s in enumerate(segments):
+        if s.duration >= minimum:
+            result.append(s)
             continue
 
-        if not any(t.inicio <= p.inicio < t.fin for p in palabras):
+        if not any(s.start <= w.start < s.end for w in words):
             continue
 
-        falta = minimo - t.duracion
-        # el borde izquierdo no puede pisar al tramo anterior YA ensanchado
-        limite_izq = resultado[-1].fin if resultado else 0.0
-        limite_der = tramos[i + 1].inicio if i + 1 < len(tramos) else duracion_total
-        espacio_izq = max(0.0, t.inicio - limite_izq)
-        espacio_der = max(0.0, limite_der - t.fin)
+        missing = minimum - s.duration
+        # the left edge can't step on the previous segment, already widened
+        left_limit = result[-1].end if result else 0.0
+        right_limit = segments[i + 1].start if i + 1 < len(segments) else total_duration
+        left_space = max(0.0, s.start - left_limit)
+        right_space = max(0.0, right_limit - s.end)
 
-        toma_der = min(falta / 2, espacio_der)
-        toma_izq = min(falta - toma_der, espacio_izq)
-        toma_der = min(falta - toma_izq, espacio_der)  # rebalanceo si un lado no daba
+        take_right = min(missing / 2, right_space)
+        take_left = min(missing - take_right, left_space)
+        take_right = min(missing - take_left, right_space)  # rebalance if one side fell short
 
-        resultado.append(Tramo(inicio=t.inicio - toma_izq, fin=t.fin + toma_der))
+        result.append(Segment(start=s.start - take_left, end=s.end + take_right))
 
-    return resultado
-
-
-def consolidar(cortes: List[Corte], duracion_total: float, palabras: List[Palabra]) -> List[Tramo]:
-    """Fuente-agnóstico: recibe cortes ya calculados (de silencios,
-    muletillas y repeticiones), fusiona los que quedarían demasiado cerca
-    -- sin borrar palabras al hacerlo -- y devuelve los tramos finales a
-    conservar."""
-    cortes = _fusionar_cercanos(cortes, palabras)
-    tramos = _tramos_conservados(cortes, duracion_total)
-    return _asegurar_tramo_minimo(tramos, palabras, duracion_total)
+    return result
 
 
-def remapear_intervalo(
-    inicio: float, fin: float, tramos: List[Tramo]
+def consolidate(cuts: List[Cut], total_duration: float, words: List[Word]) -> List[Segment]:
+    """Source-agnostic: takes already-computed cuts (from silences, filler
+    words, and repetitions), merges the ones that would end up too close
+    together -- without deleting words while doing so -- and returns the
+    final segments to keep."""
+    cuts = _merge_close_cuts(cuts, words)
+    segments = _kept_segments(cuts, total_duration)
+    return _enforce_min_segment(segments, words, total_duration)
+
+
+def remap_interval(
+    start: float, end: float, segments: List[Segment]
 ) -> Optional[Tuple[float, float]]:
-    """Traduce un intervalo [inicio, fin) de la línea de tiempo ORIGINAL
-    (p. ej. una palabra de Whisper) a la línea de tiempo ya cortada.
+    """Translates an [start, end) interval from the ORIGINAL timeline
+    (e.g. a Whisper word) onto the already-cut timeline.
 
-    A propósito NO exige que los dos bordes caigan exactos dentro del mismo
-    tramo conservado: los timestamps de palabra de Whisper no son
-    perfectos, y remapear cada borde por separado (como hacía la versión
-    anterior de esto) descartaba palabras enteras -- audibles en el video
-    final -- sólo porque un borde según Whisper rozaba el límite de un
-    corte por unos milisegundos. Acá se busca el tramo con más solapamiento
-    con el intervalo y se recorta a ese tramo. Sólo devuelve None si el
-    intervalo no solapa NINGÚN tramo conservado -- ahí sí no hay nada que
-    mostrar."""
-    acumulado = 0.0
-    mejor: Optional[Tuple[float, Tramo, float]] = None
-    for t in tramos:
-        solapa_inicio = max(inicio, t.inicio)
-        solapa_fin = min(fin, t.fin)
-        solapamiento = solapa_fin - solapa_inicio
-        if solapamiento > 0 and (mejor is None or solapamiento > mejor[0]):
-            mejor = (solapamiento, t, acumulado)
-        acumulado += t.duracion
+    On purpose it does NOT require both edges to land exactly inside the
+    same kept segment: Whisper's word timestamps aren't perfect, and
+    remapping each edge separately (like an earlier version of this did)
+    used to discard whole words -- audible in the final video -- just
+    because one edge, according to Whisper, grazed a cut boundary by a few
+    milliseconds. Here it finds the segment with the most overlap with the
+    interval and trims to that segment. It only returns None if the
+    interval doesn't overlap ANY kept segment -- only then is there really
+    nothing to show."""
+    accumulated = 0.0
+    best: Optional[Tuple[float, Segment, float]] = None
+    for s in segments:
+        overlap_start = max(start, s.start)
+        overlap_end = min(end, s.end)
+        overlap = overlap_end - overlap_start
+        if overlap > 0 and (best is None or overlap > best[0]):
+            best = (overlap, s, accumulated)
+        accumulated += s.duration
 
-    if mejor is None:
+    if best is None:
         return None
 
-    _, tramo, offset = mejor
-    inicio_recortado = max(inicio, tramo.inicio)
-    fin_recortado = min(fin, tramo.fin)
+    _, segment, offset = best
+    trimmed_start = max(start, segment.start)
+    trimmed_end = min(end, segment.end)
     return (
-        offset + (inicio_recortado - tramo.inicio),
-        offset + (fin_recortado - tramo.inicio),
+        offset + (trimmed_start - segment.start),
+        offset + (trimmed_end - segment.start),
     )

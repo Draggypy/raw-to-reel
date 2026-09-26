@@ -1,6 +1,6 @@
-"""Coreografía segura de entregar un video terminado en Listos/ y sólo
-entonces borrar el original de Crudos/. El original nunca se toca hasta
-que la copia final ya fue verificada de forma independiente.
+"""Safe choreography of delivering a finished video to Ready/ and only
+then deleting the original from Raw/. The original is never touched until
+the final copy has been independently verified.
 """
 
 import shutil
@@ -10,50 +10,50 @@ import config
 import logger
 
 
-def _copia_valida(temp_path: Path, destino: Path) -> bool:
-    """Chequeo barato de que la copia a Listos/ llegó completa."""
-    return destino.exists() and destino.stat().st_size == temp_path.stat().st_size
+def _valid_copy(temp_path: Path, destination: Path) -> bool:
+    """Cheap check that the copy to Ready/ arrived complete."""
+    return destination.exists() and destination.stat().st_size == temp_path.stat().st_size
 
 
-def finalizar(temp_path: Path, original: Path) -> bool:
-    """Copia temp_path -> Listos/, verifica la copia, y sólo entonces borra
-    el original de Crudos/ y el temporal. Si algo falla en el camino, el
-    original queda intacto."""
-    config.LISTOS.mkdir(parents=True, exist_ok=True)
-    destino = config.LISTOS / original.name
+def finalize(temp_path: Path, original: Path) -> bool:
+    """Copies temp_path -> Ready/, verifies the copy, and only then
+    deletes the original from Raw/ and the temp file. If anything fails
+    along the way, the original stays intact."""
+    config.READY.mkdir(parents=True, exist_ok=True)
+    destination = config.READY / original.name
 
     try:
-        shutil.copy2(temp_path, destino)
+        shutil.copy2(temp_path, destination)
     except OSError as e:
-        logger.log(f"ERROR copiando a Listos/: {e}")
+        logger.log(f"ERROR copying to Ready/: {e}")
         return False
 
-    if not _copia_valida(temp_path, destino):
-        logger.log("ERROR: la copia en Listos/ no coincide con el temporal, no se borra el original")
-        destino.unlink(missing_ok=True)
+    if not _valid_copy(temp_path, destination):
+        logger.log("ERROR: the copy in Ready/ doesn't match the temp file, not deleting the original")
+        destination.unlink(missing_ok=True)
         return False
 
     try:
         original.unlink()
     except OSError as e:
-        logger.log(f"ERROR borrando original de Crudos/ (la copia en Listos/ ya está OK): {e}")
+        logger.log(f"ERROR deleting original from Raw/ (the copy in Ready/ is already OK): {e}")
         return False
 
     try:
         temp_path.unlink()
     except OSError:
-        pass  # no crítico: el temporal se puede limpiar en la próxima corrida
+        pass  # not critical: the temp file can be cleaned up on the next run
 
     return True
 
 
-def marcar_fallido(original: Path) -> None:
-    """Mueve un original que falló el procesamiento a Crudos/fallidos/, para
-    no reintentarlo solo en el próximo escaneo."""
-    config.FALLIDOS.mkdir(parents=True, exist_ok=True)
-    destino = config.FALLIDOS / original.name
+def mark_failed(original: Path) -> None:
+    """Moves an original that failed processing to Raw/failed/, so it
+    isn't retried on just the next scan."""
+    config.FAILED.mkdir(parents=True, exist_ok=True)
+    destination = config.FAILED / original.name
     try:
-        shutil.move(str(original), str(destino))
-        logger.log(f"Movido a fallidos/: {original.name}")
+        shutil.move(str(original), str(destination))
+        logger.log(f"Moved to failed/: {original.name}")
     except OSError as e:
-        logger.log(f"ERROR moviendo a fallidos/: {e}")
+        logger.log(f"ERROR moving to failed/: {e}")

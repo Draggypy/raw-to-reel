@@ -1,20 +1,20 @@
-"""Aplica los cortes al video con ffmpeg.
+"""Applies the cuts to the video with ffmpeg.
 
-Corta con trim/atrim, rebasando PTS por tramo (PTS-STARTPTS), NUNCA con
-select+setpts asumiendo un frame rate constante -- ese approach ya causó
-hasta 4.9s de desincronización audio/video en el sistema anterior, porque
-el celular graba a frame rate variable.
+Cuts with trim/atrim, resetting PTS per segment (PTS-STARTPTS), NEVER with
+select+setpts assuming a constant frame rate -- that approach already
+caused up to 4.9s of audio/video desync in the previous system, because
+phones record at a variable frame rate.
 
-IMPORTANTE (encontrado y medido el 2026-08-24, después de un cuelgue real
-de la máquina): un solo filtro gigante que referencia [0:v]/[0:a] una vez
-por cada tramo (con un concat de N vías) hace que ffmpeg use MUCHA más
-memoria de la esperada -- medido: 161MB para un transcode simple, pero
-más de 1GB con sólo 3 tramos en un único filtro, y 1.4GB con 30. Cortar
-cada tramo a su propio archivo con un filtro simple (un solo trim, sin
-compartir el input con nadie más) cuesta ~165MB por tramo sin importar
-cuántos tramos haya en total -- y unirlos después con el demuxer de
-concat (stream copy, sin recodificar) es prácticamente gratis. Por eso
-el corte acá NUNCA arma un filter_complex con más de un trim adentro.
+IMPORTANT (found and measured on 2026-08-24, after a real machine freeze):
+a single giant filter that references [0:v]/[0:a] once per segment (with
+an N-way concat) makes ffmpeg use MUCH more memory than expected --
+measured: 161MB for a simple transcode, but over 1GB with just 3 segments
+in a single filter, and 1.4GB with 30. Cutting each segment to its own
+file with a simple filter (a single trim, sharing the input with nothing
+else) costs ~165MB per segment no matter how many segments there are in
+total -- and joining them afterward with the concat demuxer (stream copy,
+no re-encoding) is practically free. That's why cutting here NEVER builds
+a filter_complex with more than one trim inside.
 """
 
 import subprocess
@@ -22,165 +22,165 @@ from pathlib import Path
 from typing import List, Tuple
 
 import config
-from cut_manager import Tramo
+from cut_manager import Segment
 
 
-def _cortar_un_tramo(video: Path, tramo: Tramo, destino: Path) -> None:
-    """Corta UN solo tramo a su propio archivo.
+def _cut_one_segment(video: Path, segment: Segment, destination: Path) -> None:
+    """Cuts ONE segment to its own file.
 
-    El `-ss` va ANTES del `-i`: así ffmpeg salta directo al punto del
-    corte en vez de decodificar el video desde el segundo 0 cada vez.
-    Antes esto usaba un filtro `trim`, que obliga a decodificar todo lo
-    anterior: con 18 tramos el video se decodificaba 18 veces enteras.
-    Medido sobre un video real 1080p HEVC, cortando el mismo tramo de 2s
-    que arranca en el segundo 30: 31.6s con el filtro trim contra 6.6s
-    con `-ss` adelante, y la diferencia crece cuanto más adentro del
-    video esté el tramo. Sigue siendo exacto porque se re-codifica: con
-    `-ss` antes del `-i` ffmpeg busca el keyframe previo y descarta los
-    frames sobrantes hasta el timestamp pedido.
+    The `-ss` goes BEFORE `-i`: this way ffmpeg jumps straight to the cut
+    point instead of decoding the video from second 0 every time. This
+    used to use a `trim` filter, which forces decoding everything before
+    it: with 18 segments the video was being decoded 18 times over in
+    full. Measured on a real 1080p HEVC video, cutting the same 2s segment
+    starting at second 30: 31.6s with the trim filter versus 6.6s with
+    `-ss` up front, and the difference grows the further into the video
+    the segment is. It's still exact because it re-encodes: with `-ss`
+    before `-i` ffmpeg seeks to the previous keyframe and discards the
+    extra frames up to the requested timestamp.
 
-    El audio lleva un fundido corto de entrada y de salida para que la
-    unión con el tramo vecino no haga "clic" (ver FUNDIDO_AUDIO_SEG)."""
-    fundido = min(config.FUNDIDO_AUDIO_SEG, tramo.duracion / 2)
-    inicio_fundido_salida = max(0.0, tramo.duracion - fundido)
-    filtro_audio = (
-        f"afade=t=in:st=0:d={fundido:.3f},"
-        f"afade=t=out:st={inicio_fundido_salida:.3f}:d={fundido:.3f}"
+    The audio carries a short fade-in and fade-out so the join with the
+    neighboring segment doesn't produce a "click" (see AUDIO_FADE_SEC)."""
+    fade = min(config.AUDIO_FADE_SEC, segment.duration / 2)
+    fade_out_start = max(0.0, segment.duration - fade)
+    audio_filter = (
+        f"afade=t=in:st=0:d={fade:.3f},"
+        f"afade=t=out:st={fade_out_start:.3f}:d={fade:.3f}"
     )
-    comando = [
+    command = [
         "ffmpeg", "-y", "-hide_banner", "-loglevel", "error",
-        "-ss", f"{tramo.inicio:.3f}",
+        "-ss", f"{segment.start:.3f}",
         "-i", str(video),
-        "-t", f"{tramo.duracion:.3f}",
-        "-c:v", "libx264", "-preset", config.PRESET_SEGMENTO, "-crf", str(config.CRF_SEGMENTO),
-        "-af", filtro_audio,
+        "-t", f"{segment.duration:.3f}",
+        "-c:v", "libx264", "-preset", config.SEGMENT_PRESET, "-crf", str(config.SEGMENT_CRF),
+        "-af", audio_filter,
         "-c:a", "aac", "-b:a", "128k",
-        str(destino),
+        str(destination),
     ]
-    resultado = subprocess.run(comando, capture_output=True, text=True)
-    if resultado.returncode != 0:
-        raise RuntimeError(f"ffmpeg falló cortando un tramo: {resultado.stderr.strip()}")
+    result = subprocess.run(command, capture_output=True, text=True)
+    if result.returncode != 0:
+        raise RuntimeError(f"ffmpeg failed cutting a segment: {result.stderr.strip()}")
 
 
-def _concatenar(segmentos: List[Path], destino: Path) -> None:
-    """Une los archivos ya cortados con el demuxer de concat -- stream
-    copy, sin recodificar, prácticamente gratis en tiempo y memoria."""
-    lista_path = destino.with_suffix(".txt")
-    contenido = "\n".join(f"file '{s.resolve()}'" for s in segmentos)
-    lista_path.write_text(contenido, encoding="utf-8")
+def _concatenate(segment_files: List[Path], destination: Path) -> None:
+    """Joins the already-cut files with the concat demuxer -- stream copy,
+    no re-encoding, practically free in time and memory."""
+    list_path = destination.with_suffix(".txt")
+    content = "\n".join(f"file '{s.resolve()}'" for s in segment_files)
+    list_path.write_text(content, encoding="utf-8")
 
-    comando = [
+    command = [
         "ffmpeg", "-y", "-hide_banner", "-loglevel", "error",
-        "-f", "concat", "-safe", "0", "-i", str(lista_path),
+        "-f", "concat", "-safe", "0", "-i", str(list_path),
         "-c", "copy",
-        str(destino),
+        str(destination),
     ]
-    resultado = subprocess.run(comando, capture_output=True, text=True)
-    lista_path.unlink(missing_ok=True)
-    if resultado.returncode != 0:
-        raise RuntimeError(f"ffmpeg falló concatenando: {resultado.stderr.strip()}")
+    result = subprocess.run(command, capture_output=True, text=True)
+    list_path.unlink(missing_ok=True)
+    if result.returncode != 0:
+        raise RuntimeError(f"ffmpeg failed concatenating: {result.stderr.strip()}")
 
 
-def _escapar_ruta_para_filtro(ruta: Path) -> str:
-    """El filtro ass= de ffmpeg usa ':' y ''' como caracteres especiales
-    en su propio mini-lenguaje -- hay que escaparlos antes de envolver la
-    ruta entre comillas simples.
-    
-    En Windows, usar barras '/' (formato posix) es el estándar soportado por
-    ffmpeg para evitar colisiones de escape con barras invertidas."""
-    if hasattr(ruta, "as_posix"):
-        texto = ruta.as_posix()
+def _escape_path_for_filter(path: Path) -> str:
+    """ffmpeg's ass= filter uses ':' and ''' as special characters in its
+    own mini-language -- they need escaping before wrapping the path in
+    single quotes.
+
+    On Windows, using '/' slashes (posix format) is the standard supported
+    by ffmpeg to avoid escaping collisions with backslashes."""
+    if hasattr(path, "as_posix"):
+        text = path.as_posix()
     else:
-        texto = str(ruta).replace("\\", "/")
-    texto = texto.replace(":", "\\:").replace("'", "\\'")
-    return f"'{texto}'"
+        text = str(path).replace("\\", "/")
+    text = text.replace(":", "\\:").replace("'", "\\'")
+    return f"'{text}'"
 
 
-def _quemar_subtitulos(video: Path, ass_path: Path, destino: Path) -> None:
-    """Único paso que recodifica el video final -- el audio se copia tal
-    cual, los subtítulos no lo tocan."""
-    ruta_ass = _escapar_ruta_para_filtro(ass_path)
-    comando = [
+def _burn_subtitles(video: Path, ass_path: Path, destination: Path) -> None:
+    """The only step that re-encodes the final video -- the audio is
+    copied as-is, subtitles don't touch it."""
+    escaped_ass_path = _escape_path_for_filter(ass_path)
+    command = [
         "ffmpeg", "-y", "-hide_banner", "-loglevel", "error",
         "-i", str(video),
-        "-vf", f"ass={ruta_ass}",
-        "-c:v", "libx264", "-preset", config.PRESET_FINAL, "-crf", str(config.CRF_FINAL),
+        "-vf", f"ass={escaped_ass_path}",
+        "-c:v", "libx264", "-preset", config.FINAL_PRESET, "-crf", str(config.FINAL_CRF),
         "-c:a", "copy",
-        str(destino),
+        str(destination),
     ]
-    resultado = subprocess.run(comando, capture_output=True, text=True)
-    if resultado.returncode != 0:
-        raise RuntimeError(f"ffmpeg falló quemando subtítulos: {resultado.stderr.strip()}")
+    result = subprocess.run(command, capture_output=True, text=True)
+    if result.returncode != 0:
+        raise RuntimeError(f"ffmpeg failed burning subtitles: {result.stderr.strip()}")
 
 
-def cortar_video(video: Path, tramos: List[Tramo], destino: Path) -> None:
-    """Escribe en destino el video con sólo los tramos conservados,
-    concatenados en orden, sin quemar subtítulos (ver cortar_y_subtitular
-    para el paso real del pipeline)."""
-    if not tramos:
-        raise ValueError("No hay tramos para conservar -- no se puede generar un video vacío")
+def cut_video(video: Path, segments: List[Segment], destination: Path) -> None:
+    """Writes to destination the video with only the kept segments,
+    concatenated in order, without burning subtitles (see
+    cut_and_add_subtitles for the real pipeline step)."""
+    if not segments:
+        raise ValueError("No segments to keep -- can't generate an empty video")
 
-    destino.parent.mkdir(parents=True, exist_ok=True)
-    segmentos = [destino.parent / f"{destino.stem}_seg{i}.mp4" for i in range(len(tramos))]
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    segment_files = [destination.parent / f"{destination.stem}_seg{i}.mp4" for i in range(len(segments))]
 
     try:
-        for tramo, seg_path in zip(tramos, segmentos):
-            _cortar_un_tramo(video, tramo, seg_path)
-        _concatenar(segmentos, destino)
+        for segment, seg_path in zip(segments, segment_files):
+            _cut_one_segment(video, segment, seg_path)
+        _concatenate(segment_files, destination)
     finally:
-        for seg in segmentos:
+        for seg in segment_files:
             seg.unlink(missing_ok=True)
 
 
-def cortar_y_subtitular(video: Path, tramos: List[Tramo], ass_path: Path, destino: Path) -> None:
-    """Corta a los tramos conservados y quema los subtítulos ya
-    remapeados. Cada tramo se corta a su propio archivo, se concatenan
-    sin recodificar, y recién ahí se queman los subtítulos en un único
-    paso final -- tres pasos simples en vez de un filtro gigante."""
-    if not tramos:
-        raise ValueError("No hay tramos para conservar -- no se puede generar un video vacío")
+def cut_and_add_subtitles(video: Path, segments: List[Segment], ass_path: Path, destination: Path) -> None:
+    """Cuts to the kept segments and burns in the already-remapped
+    subtitles. Each segment is cut to its own file, they're concatenated
+    without re-encoding, and only then are subtitles burned in a single
+    final pass -- three simple steps instead of one giant filter."""
+    if not segments:
+        raise ValueError("No segments to keep -- can't generate an empty video")
 
-    destino.parent.mkdir(parents=True, exist_ok=True)
-    segmentos = [destino.parent / f"{destino.stem}_seg{i}.mp4" for i in range(len(tramos))]
-    concatenado = destino.parent / f"{destino.stem}_concat.mp4"
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    segment_files = [destination.parent / f"{destination.stem}_seg{i}.mp4" for i in range(len(segments))]
+    concatenated = destination.parent / f"{destination.stem}_concat.mp4"
 
     try:
-        for tramo, seg_path in zip(tramos, segmentos):
-            _cortar_un_tramo(video, tramo, seg_path)
-        _concatenar(segmentos, concatenado)
-        _quemar_subtitulos(concatenado, ass_path, destino)
+        for segment, seg_path in zip(segments, segment_files):
+            _cut_one_segment(video, segment, seg_path)
+        _concatenate(segment_files, concatenated)
+        _burn_subtitles(concatenated, ass_path, destination)
     finally:
-        for seg in segmentos:
+        for seg in segment_files:
             seg.unlink(missing_ok=True)
-        concatenado.unlink(missing_ok=True)
+        concatenated.unlink(missing_ok=True)
 
 
-def obtener_duracion_total(video: Path) -> float:
-    comando = [
+def get_total_duration(video: Path) -> float:
+    command = [
         "ffprobe", "-v", "error", "-show_entries", "format=duration",
         "-of", "csv=p=0", str(video),
     ]
-    resultado = subprocess.run(comando, capture_output=True, text=True)
-    if resultado.returncode != 0 or not resultado.stdout.strip():
-        raise RuntimeError(f"ffprobe falló obteniendo duración: {resultado.stderr.strip()}")
-    return float(resultado.stdout.strip())
+    result = subprocess.run(command, capture_output=True, text=True)
+    if result.returncode != 0 or not result.stdout.strip():
+        raise RuntimeError(f"ffprobe failed getting duration: {result.stderr.strip()}")
+    return float(result.stdout.strip())
 
 
-def duraciones_de_streams(video: Path) -> Tuple[float, float]:
-    """Duración del stream de video y de audio por separado -- reportados
-    distinto es exactamente la señal del bug de desincronización que ya
-    pasó antes."""
-    def _duracion(select_stream: str) -> float:
-        comando = [
+def stream_durations(video: Path) -> Tuple[float, float]:
+    """Duration of the video and audio streams separately -- reporting
+    differently is exactly the signal of the desync bug that already
+    happened before."""
+    def _duration(select_stream: str) -> float:
+        command = [
             "ffprobe", "-v", "error", "-select_streams", select_stream,
             "-show_entries", "stream=duration", "-of", "csv=p=0",
             str(video),
         ]
-        resultado = subprocess.run(comando, capture_output=True, text=True)
-        if resultado.returncode != 0 or not resultado.stdout.strip():
-            raise RuntimeError(f"ffprobe falló obteniendo duración ({select_stream}): {resultado.stderr.strip()}")
-        # el stream de video puede traer una coma final de más si tiene
-        # SIDE_DATA (metadata de rotación, común en HEVC de celular)
-        return float(resultado.stdout.strip().rstrip(","))
+        result = subprocess.run(command, capture_output=True, text=True)
+        if result.returncode != 0 or not result.stdout.strip():
+            raise RuntimeError(f"ffprobe failed getting duration ({select_stream}): {result.stderr.strip()}")
+        # the video stream can carry an extra trailing comma if it has
+        # SIDE_DATA (rotation metadata, very common in phone HEVC)
+        return float(result.stdout.strip().rstrip(","))
 
-    return _duracion("v:0"), _duracion("a:0")
+    return _duration("v:0"), _duration("a:0")

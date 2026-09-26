@@ -1,8 +1,8 @@
-"""Genera subtítulos .ass a partir de las palabras de Whisper.
+"""Generates .ass subtitles from Whisper's words.
 
-Puede trabajar sobre la línea de tiempo original o sobre una ya remapeada
-a un video cortado (ver remapear_palabras) -- no necesita saber cuál es
-cuál, sólo recibe una lista de Palabra con los timestamps que sean.
+Can work on the original timeline or on one already remapped to a cut
+video (see remap_words) -- it doesn't need to know which is which, it just
+receives a list of Word with whatever timestamps they have.
 """
 
 import subprocess
@@ -12,128 +12,128 @@ from typing import List, Tuple
 
 import config
 import cut_manager
-from transcription import Palabra
+from transcription import Word
 
 
-def remapear_palabras(palabras: List[Palabra], tramos: List["cut_manager.Tramo"]) -> List[Palabra]:
-    """Traduce cada palabra a la línea de tiempo de salida contra los
-    tramos ya cortados (ver cut_manager.remapear_intervalo). Una palabra
-    que no solapa NINGÚN tramo conservado se descarta -- no tiene sentido
-    mostrar un subtítulo de algo que ya no está en el video final. Si
-    solapa parcialmente (borde de Whisper impreciso), se recorta al tramo
-    en vez de descartarse entera."""
-    remapeadas = []
-    for p in palabras:
-        intervalo = cut_manager.remapear_intervalo(p.inicio, p.fin, tramos)
-        if intervalo is None:
+def remap_words(words: List[Word], segments: List["cut_manager.Segment"]) -> List[Word]:
+    """Translates each word onto the output timeline against the
+    already-cut segments (see cut_manager.remap_interval). A word that
+    doesn't overlap ANY kept segment is dropped -- there's no point
+    showing a subtitle for something that's no longer in the final video.
+    If it overlaps partially (an imprecise Whisper edge), it's trimmed to
+    the segment instead of being dropped entirely."""
+    remapped = []
+    for w in words:
+        interval = cut_manager.remap_interval(w.start, w.end, segments)
+        if interval is None:
             continue
-        nuevo_inicio, nuevo_fin = intervalo
-        remapeadas.append(Palabra(texto=p.texto, inicio=nuevo_inicio, fin=nuevo_fin))
-    return remapeadas
+        new_start, new_end = interval
+        remapped.append(Word(text=w.text, start=new_start, end=new_end))
+    return remapped
 
 
 @dataclass
 class Caption:
-    texto: str
-    inicio: float
-    fin: float
+    text: str
+    start: float
+    end: float
 
 
-def agrupar_en_captions(palabras: List[Palabra]) -> List[Caption]:
-    """Agrupa palabras consecutivas en captions cortos (estilo CapCut/Reels):
-    máximo N palabras, y siempre arranca un caption nuevo si hay una pausa
-    real entre una palabra y la siguiente."""
-    if not palabras:
+def group_into_captions(words: List[Word]) -> List[Caption]:
+    """Groups consecutive words into short captions (CapCut/Reels style):
+    at most N words, and always starts a new caption if there's a real
+    pause between one word and the next."""
+    if not words:
         return []
 
     captions = []
-    grupo = [palabras[0]]
+    group = [words[0]]
 
-    for palabra in palabras[1:]:
-        pausa = palabra.inicio - grupo[-1].fin
-        si_pausa_larga = pausa >= config.PAUSA_CORTE_CAPTION_SEG
-        si_grupo_lleno = len(grupo) >= config.MAX_PALABRAS_POR_CAPTION
-        if si_pausa_larga or si_grupo_lleno:
-            captions.append(_cerrar_grupo(grupo))
-            grupo = [palabra]
+    for word in words[1:]:
+        pause = word.start - group[-1].end
+        long_pause = pause >= config.CAPTION_PAUSE_CUT_SEC
+        group_full = len(group) >= config.MAX_WORDS_PER_CAPTION
+        if long_pause or group_full:
+            captions.append(_close_group(group))
+            group = [word]
         else:
-            grupo.append(palabra)
+            group.append(word)
 
-    captions.append(_cerrar_grupo(grupo))
+    captions.append(_close_group(group))
     return captions
 
 
-def _cerrar_grupo(grupo: List[Palabra]) -> Caption:
-    texto = " ".join(p.texto for p in grupo)
-    return Caption(texto=texto, inicio=grupo[0].inicio, fin=grupo[-1].fin)
+def _close_group(group: List[Word]) -> Caption:
+    text = " ".join(w.text for w in group)
+    return Caption(text=text, start=group[0].start, end=group[-1].end)
 
 
-def obtener_dimensiones(video: Path) -> Tuple[int, int]:
-    comando = [
+def get_dimensions(video: Path) -> Tuple[int, int]:
+    command = [
         "ffprobe", "-v", "error", "-select_streams", "v:0",
         "-show_entries", "stream=width,height",
         "-of", "csv=p=0",
         str(video),
     ]
-    resultado = subprocess.run(comando, capture_output=True, text=True)
-    if resultado.returncode != 0:
-        raise RuntimeError(f"ffprobe falló obteniendo dimensiones: {resultado.stderr.strip()}")
+    result = subprocess.run(command, capture_output=True, text=True)
+    if result.returncode != 0:
+        raise RuntimeError(f"ffprobe failed getting dimensions: {result.stderr.strip()}")
 
-    # ffprobe agrega una coma final de más cuando el stream de video trae
-    # SIDE_DATA (p. ej. metadata de rotación, muy común en HEVC de celular)
-    # -- se toman sólo los primeros dos valores, se ignora cualquier resto.
-    valores = resultado.stdout.strip().split(",")
-    return int(valores[0]), int(valores[1])
-
-
-def _formatear_tiempo_ass(segundos: float) -> str:
-    """Convierte a centésimas como entero primero para no arrastrar errores
-    de redondeo de punto flotante al formatear H:MM:SS.CC."""
-    total_centesimas = round(segundos * 100)
-    centesimas = total_centesimas % 100
-    total_segundos = total_centesimas // 100
-    segs = total_segundos % 60
-    total_minutos = total_segundos // 60
-    minutos = total_minutos % 60
-    horas = total_minutos // 60
-    return f"{horas}:{minutos:02d}:{segs:02d}.{centesimas:02d}"
+    # ffprobe adds an extra trailing comma when the video stream carries
+    # SIDE_DATA (e.g. rotation metadata, very common in phone HEVC) --
+    # only the first two values are taken, the rest is ignored.
+    values = result.stdout.strip().split(",")
+    return int(values[0]), int(values[1])
 
 
-def generar_ass(captions: List[Caption], ancho: int, alto: int, destino: Path) -> None:
-    tamano_fuente = round(alto * config.FRACCION_TAMANO_FUENTE)
-    contorno = round(alto * config.FRACCION_CONTORNO)
-    margen_inferior = round(alto * config.FRACCION_MARGEN_INFERIOR)
+def _format_ass_time(seconds: float) -> str:
+    """Converts to hundredths as an integer first, so as not to carry
+    floating-point rounding errors into the H:MM:SS.CC formatting."""
+    total_hundredths = round(seconds * 100)
+    hundredths = total_hundredths % 100
+    total_seconds = total_hundredths // 100
+    secs = total_seconds % 60
+    total_minutes = total_seconds // 60
+    minutes = total_minutes % 60
+    hours = total_minutes // 60
+    return f"{hours}:{minutes:02d}:{secs:02d}.{hundredths:02d}"
 
-    encabezado = (
+
+def generate_ass(captions: List[Caption], width: int, height: int, destination: Path) -> None:
+    font_size = round(height * config.FONT_SIZE_FRACTION)
+    outline = round(height * config.OUTLINE_FRACTION)
+    bottom_margin = round(height * config.BOTTOM_MARGIN_FRACTION)
+
+    header = (
         "[Script Info]\n"
-        "Title: Editor Gianni\n"
+        "Title: RawToReel\n"
         "ScriptType: v4.00+\n"
-        f"PlayResX: {ancho}\n"
-        f"PlayResY: {alto}\n"
+        f"PlayResX: {width}\n"
+        f"PlayResY: {height}\n"
         "ScaledBorderAndShadow: yes\n"
         "\n"
         "[V4+ Styles]\n"
         "Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, "
         "Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, "
         "Alignment, MarginL, MarginR, MarginV, Encoding\n"
-        f"Style: Default,{config.FUENTE_SUBTITULOS},{tamano_fuente},&H00FFFFFF,&H000000FF,"
-        f"&H00000000,&H00000000,0,0,0,0,100,{config.ESCALA_VERTICAL_SUBTITULOS},0,0,1,{contorno},0,2,20,20,{margen_inferior},1\n"
+        f"Style: Default,{config.SUBTITLE_FONT},{font_size},&H00FFFFFF,&H000000FF,"
+        f"&H00000000,&H00000000,0,0,0,0,100,{config.SUBTITLE_VERTICAL_SCALE},0,0,1,{outline},0,2,20,20,{bottom_margin},1\n"
         "\n"
         "[Events]\n"
         "Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text\n"
     )
 
-    # El tracking negativo se aplica acá, no en el campo Spacing del Style:
-    # se probó y libass lo ignora cuando es negativo (queda igual que en 0),
-    # pero sí respeta el override \fsp puesto en cada línea de diálogo.
-    prefijo_tracking = f"{{\\fsp{config.TRACKING_SUBTITULOS}}}" if config.TRACKING_SUBTITULOS else ""
+    # The negative tracking is applied here, not in the Style's Spacing
+    # field: tested, and libass ignores it when negative (behaves the same
+    # as 0), but it does honor the \fsp override placed on each dialogue line.
+    tracking_prefix = f"{{\\fsp{config.SUBTITLE_TRACKING}}}" if config.SUBTITLE_TRACKING else ""
 
-    lineas = []
+    lines = []
     for cap in captions:
-        inicio = _formatear_tiempo_ass(cap.inicio)
-        fin = _formatear_tiempo_ass(cap.fin)
-        texto = cap.texto.replace("\n", " ").strip()
-        if texto:
-            lineas.append(f"Dialogue: 0,{inicio},{fin},Default,,0,0,0,,{prefijo_tracking}{texto}")
+        start = _format_ass_time(cap.start)
+        end = _format_ass_time(cap.end)
+        text = cap.text.replace("\n", " ").strip()
+        if text:
+            lines.append(f"Dialogue: 0,{start},{end},Default,,0,0,0,,{tracking_prefix}{text}")
 
-    destino.write_text(encabezado + "\n".join(lineas) + "\n", encoding="utf-8")
+    destination.write_text(header + "\n".join(lines) + "\n", encoding="utf-8")

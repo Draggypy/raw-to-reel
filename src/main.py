@@ -1,15 +1,15 @@
-"""Editor Gianni -- punto de entrada.
+"""RawToReel -- entry point.
 
-Loop: buscar un video estable en Crudos/, procesarlo por completo, repetir.
-Un video a la vez, siempre. Sin vigilante separado: este mismo programa
-hace de escaneo + procesamiento.
+Loop: find a stable video in Raw/, process it fully, repeat. One video at
+a time, always. No separate watcher: this same program does the scanning
+and the processing.
 
-Pipeline real (Fases 3-11, todas ya integradas acá): transcribir ->
-detectar silencios + muletillas/repeticiones -> consolidar cortes
-(sin pisar inicios de palabra) -> generar subtítulos remapeados -> cortar + quemar
-subtítulos con ffmpeg -> validar. Sólo si todo eso sale bien se llama a
-file_manager.finalizar(), que recién ahí mueve el resultado a Listos/ y
-borra el original de Crudos/.
+Real pipeline (Phases 3-11, all already integrated here): transcribe ->
+detect silences + filler words/repetitions -> consolidate cuts (without
+stepping on word starts) -> generate remapped subtitles -> cut + burn
+subtitles with ffmpeg -> validate. Only if all of that goes well is
+file_manager.finalize() called, and only then does it move the result to
+Ready/ and delete the original from Raw/.
 """
 
 import signal
@@ -28,114 +28,114 @@ import transcription
 import validator
 import video_processor
 
-_seguir_corriendo = True
+_keep_running = True
 
 
-def _pedido_de_parar(signum, frame):
-    global _seguir_corriendo
-    logger.log(f"Señal {signum} recibida, terminando después del video actual (si hay uno)")
-    _seguir_corriendo = False
+def _handle_stop_signal(signum, frame):
+    global _keep_running
+    logger.log(f"Signal {signum} received, finishing after the current video (if any)")
+    _keep_running = False
 
 
-def procesar_video(video: Path) -> bool:
-    logger.log(f"Procesando: {video.name}")
+def process_video(video: Path) -> bool:
+    logger.log(f"Processing: {video.name}")
 
     try:
-        resultado = transcription.transcribir_video(video)
+        result = transcription.transcribe_video(video)
 
-        if not resultado.palabras:
-            logger.log("ADVERTENCIA: la transcripción no devolvió ninguna palabra, no hay nada que conservar")
+        if not result.words:
+            logger.log("WARNING: the transcription returned no words, nothing to keep")
             return False
 
-        logger.actualizar_estado(video.name, "detectando silencios")
-        silencios = silence_detector.detectar_silencios(resultado.audio_path)
-        logger.log(f"Silencios detectados: {len(silencios)}")
+        logger.update_status(video.name, "detecting silences")
+        silences = silence_detector.detect_silences(result.audio_path)
+        logger.log(f"Silences detected: {len(silences)}")
 
-        ancho, alto = subtitle_generator.obtener_dimensiones(video)
-        duracion_total = video_processor.obtener_duracion_total(video)
+        width, height = subtitle_generator.get_dimensions(video)
+        total_duration = video_processor.get_total_duration(video)
 
         try:
-            resultado.audio_path.unlink()
+            result.audio_path.unlink()
         except OSError:
-            pass  # no crítico, es solo el WAV intermedio
+            pass  # not critical, it's just the intermediate WAV
 
-        logger.actualizar_estado(video.name, "buscando muletillas")
-        cortes_muletillas = repetition_detector.detectar_muletillas(resultado.palabras, silencios)
-        cortes_repeticiones = (
-            repetition_detector.detectar_repeticiones(resultado.palabras, silencios)
-            if config.CORTAR_REPETICIONES
+        logger.update_status(video.name, "looking for filler words")
+        filler_cuts = repetition_detector.detect_filler_words(result.words, silences)
+        repetition_cuts = (
+            repetition_detector.detect_repetitions(result.words, silences)
+            if config.CUT_REPETITIONS
             else []
         )
         logger.log(
-            f"Muletillas: {len(cortes_muletillas)}, repeticiones: {len(cortes_repeticiones)}"
+            f"Filler words: {len(filler_cuts)}, repetitions: {len(repetition_cuts)}"
         )
 
-        logger.actualizar_estado(video.name, "consolidando cortes")
-        cortes = (
-            cut_manager.cortes_desde_silencios(silencios, resultado.palabras)
-            + cortes_muletillas
-            + cortes_repeticiones
+        logger.update_status(video.name, "consolidating cuts")
+        cuts = (
+            cut_manager.cuts_from_silences(silences, result.words)
+            + filler_cuts
+            + repetition_cuts
         )
-        tramos = cut_manager.consolidar(cortes, duracion_total, resultado.palabras)
-        logger.log(f"Tramos a conservar: {len(tramos)} (de {duracion_total:.1f}s originales)")
+        segments = cut_manager.consolidate(cuts, total_duration, result.words)
+        logger.log(f"Segments to keep: {len(segments)} (out of {total_duration:.1f}s original)")
 
-        if not tramos:
-            logger.log("ERROR: no quedó ningún tramo para conservar")
+        if not segments:
+            logger.log("ERROR: no segment was left to keep")
             return False
 
-        logger.actualizar_estado(video.name, "generando subtítulos")
-        palabras_remapeadas = subtitle_generator.remapear_palabras(resultado.palabras, tramos)
-        captions = subtitle_generator.agrupar_en_captions(palabras_remapeadas)
+        logger.update_status(video.name, "generating subtitles")
+        remapped_words = subtitle_generator.remap_words(result.words, segments)
+        captions = subtitle_generator.group_into_captions(remapped_words)
 
         config.TEMP.mkdir(parents=True, exist_ok=True)
         ass_path = config.TEMP / f"{video.stem}.ass"
-        subtitle_generator.generar_ass(captions, ancho, alto, ass_path)
+        subtitle_generator.generate_ass(captions, width, height, ass_path)
 
-        logger.actualizar_estado(video.name, "cortando y renderizando")
+        logger.update_status(video.name, "cutting and rendering")
         temp_path = config.TEMP / video.name
-        video_processor.cortar_y_subtitular(video, tramos, ass_path, temp_path)
+        video_processor.cut_and_add_subtitles(video, segments, ass_path, temp_path)
 
         try:
             ass_path.unlink()
         except OSError:
             pass
 
-        logger.actualizar_estado(video.name, "validando")
-        resultado_validacion = validator.validar(temp_path, tramos)
-        if not resultado_validacion.ok:
-            logger.log(f"ERROR de validación: {resultado_validacion.motivo}")
+        logger.update_status(video.name, "validating")
+        validation_result = validator.validate(temp_path, segments)
+        if not validation_result.ok:
+            logger.log(f"VALIDATION ERROR: {validation_result.reason}")
             return False
 
     except Exception as e:
-        logger.log(f"ERROR procesando video: {e}")
+        logger.log(f"ERROR processing video: {e}")
         return False
 
-    logger.actualizar_estado(video.name, "moviendo a Listos")
-    ok = file_manager.finalizar(temp_path, video)
-    logger.log(f"Listo: {video.name}" if ok else f"Falló: {video.name}")
+    logger.update_status(video.name, "moving to Ready")
+    ok = file_manager.finalize(temp_path, video)
+    logger.log(f"Done: {video.name}" if ok else f"Failed: {video.name}")
     return ok
 
 
 def main() -> None:
-    signal.signal(signal.SIGINT, _pedido_de_parar)
-    signal.signal(signal.SIGTERM, _pedido_de_parar)
+    signal.signal(signal.SIGINT, _handle_stop_signal)
+    signal.signal(signal.SIGTERM, _handle_stop_signal)
 
-    logger.log("Editor Gianni arrancando")
+    logger.log("RawToReel starting")
 
-    while _seguir_corriendo:
-        video = scanner.siguiente_video()
+    while _keep_running:
+        video = scanner.next_video()
 
         if video is None:
-            logger.actualizar_estado(None, "esperando")
-            time.sleep(config.INTERVALO_ESCANEO_SEG)
+            logger.update_status(None, "waiting")
+            time.sleep(config.SCAN_INTERVAL_SEC)
             continue
 
-        exito = procesar_video(video)
-        if not exito:
-            file_manager.marcar_fallido(video)
+        success = process_video(video)
+        if not success:
+            file_manager.mark_failed(video)
 
-    logger.log("Editor Gianni terminando")
-    logger.actualizar_estado(None, "detenido")
+    logger.log("RawToReel stopping")
+    logger.update_status(None, "stopped")
 
 
 if __name__ == "__main__":

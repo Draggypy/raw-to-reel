@@ -1,10 +1,10 @@
-"""Detección conservadora de silencios reales sobre el audio ya extraído.
+"""Conservative detection of real silences over the already-extracted audio.
 
-Usa un umbral ADAPTATIVO (piso de ruido propio de este video + margen), no
-un número fijo -- un video grabado en una habitación con algo de ruido de
-fondo no debería tratarse igual que uno grabado en silencio casi total.
-Ante la duda, no se marca como silencio: mejor dejar un resto de silencio
-que arriesgarse a cortar dentro de una palabra.
+Uses an ADAPTIVE threshold (this video's own noise floor + margin), not a
+fixed number -- a video recorded in a room with some background noise
+shouldn't be treated the same as one recorded in near-total silence. When
+in doubt, it's not marked as silence: better to leave a bit of silence in
+than risk cutting inside a word.
 """
 
 import wave
@@ -19,111 +19,111 @@ import logger
 
 
 @dataclass
-class Silencio:
-    inicio: float  # segundos, línea de tiempo del audio analizado
-    fin: float
+class Silence:
+    start: float  # seconds, timeline of the analyzed audio
+    end: float
 
 
-def _cargar_audio_mono16(audio_path: Path) -> Tuple[np.ndarray, int]:
+def _load_mono16_audio(audio_path: Path) -> Tuple[np.ndarray, int]:
     with wave.open(str(audio_path), "rb") as wav:
         if wav.getnchannels() != 1 or wav.getsampwidth() != 2:
             raise ValueError(
-                "Se esperaba WAV mono de 16 bits (el que genera transcription.extraer_audio)"
+                "Expected a mono 16-bit WAV (the kind transcription.extract_audio produces)"
             )
-        frecuencia = wav.getframerate()
-        crudo = wav.readframes(wav.getnframes())
+        rate = wav.getframerate()
+        raw = wav.readframes(wav.getnframes())
 
-    muestras = np.frombuffer(crudo, dtype=np.int16).astype(np.float64)
-    return muestras, frecuencia
+    samples = np.frombuffer(raw, dtype=np.int16).astype(np.float64)
+    return samples, rate
 
 
-def _volumen_db_por_ventana(muestras: np.ndarray, frecuencia: int) -> np.ndarray:
-    tam_ventana = max(1, round(frecuencia * config.VENTANA_SILENCIO_MS / 1000))
-    n_ventanas = len(muestras) // tam_ventana
-    if n_ventanas == 0:
+def _db_volume_per_window(samples: np.ndarray, rate: int) -> np.ndarray:
+    window_size = max(1, round(rate * config.SILENCE_WINDOW_MS / 1000))
+    n_windows = len(samples) // window_size
+    if n_windows == 0:
         return np.array([])
 
-    recortado = muestras[: n_ventanas * tam_ventana]
-    ventanas = recortado.reshape(n_ventanas, tam_ventana)
-    rms = np.sqrt(np.mean(ventanas ** 2, axis=1))
-    rms = np.maximum(rms, 1.0)  # evita log(0) en tramos de silencio digital puro
+    trimmed = samples[: n_windows * window_size]
+    windows = trimmed.reshape(n_windows, window_size)
+    rms = np.sqrt(np.mean(windows ** 2, axis=1))
+    rms = np.maximum(rms, 1.0)  # avoids log(0) on pure digital-silence stretches
     return 20 * np.log10(rms / 32768.0)
 
 
-def _suavizar(db_por_ventana: np.ndarray) -> np.ndarray:
-    n = max(1, round(config.SUAVIZADO_SILENCIO_MS / config.VENTANA_SILENCIO_MS))
-    if n <= 1 or len(db_por_ventana) < n:
-        return db_por_ventana
-    # Promedio móvil con bordes rellenados (edge), para no arrastrar ceros
-    # (= 0dB, volumen máximo) hacia adentro en el arranque y el final.
-    relleno = n // 2
-    extendido = np.pad(db_por_ventana, (relleno, n - 1 - relleno), mode="edge")
-    return np.convolve(extendido, np.ones(n) / n, mode="valid")
+def _smooth(db_per_window: np.ndarray) -> np.ndarray:
+    n = max(1, round(config.SILENCE_SMOOTHING_MS / config.SILENCE_WINDOW_MS))
+    if n <= 1 or len(db_per_window) < n:
+        return db_per_window
+    # Moving average with edge-padded borders, so as not to drag zeros
+    # (= 0dB, max volume) inward at the start and end.
+    pad = n // 2
+    padded = np.pad(db_per_window, (pad, n - 1 - pad), mode="edge")
+    return np.convolve(padded, np.ones(n) / n, mode="valid")
 
 
-def _marcar_silencio_con_histeresis(db_por_ventana: np.ndarray, umbral: float) -> np.ndarray:
-    """Devuelve un booleano por ventana. Entrar en silencio exige caer
-    HISTERESIS_DB por debajo del umbral; salir alcanza con volver a
-    tocarlo. Así una voz floja que roza el umbral no abre un silencio, y
-    cualquier asomo de voz lo cierra."""
-    umbral_entrar = umbral - config.HISTERESIS_DB
-    es_silencio = np.zeros(len(db_por_ventana), dtype=bool)
-    en_silencio = False
-    for i, db in enumerate(db_por_ventana):
-        if en_silencio:
-            en_silencio = db < umbral
+def _mark_silence_with_hysteresis(db_per_window: np.ndarray, threshold: float) -> np.ndarray:
+    """Returns a boolean per window. Entering silence requires dropping
+    HYSTERESIS_DB below the threshold; leaving it only requires touching it
+    again. This way a soft voice grazing the threshold doesn't open a
+    silence, and any hint of voice closes one."""
+    enter_threshold = threshold - config.HYSTERESIS_DB
+    is_silence = np.zeros(len(db_per_window), dtype=bool)
+    in_silence = False
+    for i, db in enumerate(db_per_window):
+        if in_silence:
+            in_silence = db < threshold
         else:
-            en_silencio = db < umbral_entrar
-        es_silencio[i] = en_silencio
-    return es_silencio
+            in_silence = db < enter_threshold
+        is_silence[i] = in_silence
+    return is_silence
 
 
-def detectar_silencios(audio_path: Path) -> List[Silencio]:
-    muestras, frecuencia = _cargar_audio_mono16(audio_path)
-    db_por_ventana = _volumen_db_por_ventana(muestras, frecuencia)
-    if len(db_por_ventana) == 0:
+def detect_silences(audio_path: Path) -> List[Silence]:
+    samples, rate = _load_mono16_audio(audio_path)
+    db_per_window = _db_volume_per_window(samples, rate)
+    if len(db_per_window) == 0:
         return []
-    return _silencios_desde_db(db_por_ventana)
+    return _silences_from_db(db_per_window)
 
 
-def _silencios_desde_db(db_por_ventana: np.ndarray) -> List[Silencio]:
-    db_por_ventana = _suavizar(db_por_ventana)
+def _silences_from_db(db_per_window: np.ndarray) -> List[Silence]:
+    db_per_window = _smooth(db_per_window)
 
-    piso_de_ruido_crudo = float(np.percentile(db_por_ventana, 10))
-    # Si el percentil 10 ya cae dentro de rango de voz (poca pausa real en
-    # este video en particular), no confiar en él tal cual -- lo baja al
-    # techo real documentado de "silencio" antes de sumarle el margen.
-    piso_de_ruido = min(piso_de_ruido_crudo, config.PISO_RUIDO_MAX_DB)
-    umbral = piso_de_ruido + config.MARGEN_DB_SOBRE_PISO
-    umbral = max(config.UMBRAL_DB_MIN, min(config.UMBRAL_DB_MAX, umbral))
+    raw_noise_floor = float(np.percentile(db_per_window, 10))
+    # If the 10th percentile already falls within the voice range (little
+    # real pause in this particular video), don't trust it as-is -- clamp
+    # it to the documented real ceiling of "silence" before adding the margin.
+    noise_floor = min(raw_noise_floor, config.NOISE_FLOOR_MAX_DB)
+    threshold = noise_floor + config.DB_MARGIN_OVER_FLOOR
+    threshold = max(config.DB_THRESHOLD_MIN, min(config.DB_THRESHOLD_MAX, threshold))
     logger.log(
-        f"Umbral de silencio: piso crudo {piso_de_ruido_crudo:.1f}dB "
-        f"(usado {piso_de_ruido:.1f}dB) -> umbral {umbral:.1f}dB"
+        f"Silence threshold: raw floor {raw_noise_floor:.1f}dB "
+        f"(used {noise_floor:.1f}dB) -> threshold {threshold:.1f}dB"
     )
 
-    tam_ventana_seg = config.VENTANA_SILENCIO_MS / 1000
-    es_silencio = _marcar_silencio_con_histeresis(db_por_ventana, umbral)
+    window_size_sec = config.SILENCE_WINDOW_MS / 1000
+    is_silence = _mark_silence_with_hysteresis(db_per_window, threshold)
 
-    tramos_crudos = []
-    inicio_actual = None
-    for i, silencioso in enumerate(es_silencio):
-        if silencioso and inicio_actual is None:
-            inicio_actual = i
-        elif not silencioso and inicio_actual is not None:
-            tramos_crudos.append((inicio_actual, i))
-            inicio_actual = None
-    if inicio_actual is not None:
-        tramos_crudos.append((inicio_actual, len(es_silencio)))
+    raw_segments = []
+    current_start = None
+    for i, silent in enumerate(is_silence):
+        if silent and current_start is None:
+            current_start = i
+        elif not silent and current_start is not None:
+            raw_segments.append((current_start, i))
+            current_start = None
+    if current_start is not None:
+        raw_segments.append((current_start, len(is_silence)))
 
-    resultado = []
-    for ini_ventana, fin_ventana in tramos_crudos:
-        duracion_ms = (fin_ventana - ini_ventana) * tam_ventana_seg * 1000
-        if duracion_ms >= config.DURACION_MINIMA_SILENCIO_MS:
-            resultado.append(
-                Silencio(
-                    inicio=ini_ventana * tam_ventana_seg,
-                    fin=fin_ventana * tam_ventana_seg,
+    result = []
+    for start_window, end_window in raw_segments:
+        duration_ms = (end_window - start_window) * window_size_sec * 1000
+        if duration_ms >= config.MIN_SILENCE_DURATION_MS:
+            result.append(
+                Silence(
+                    start=start_window * window_size_sec,
+                    end=end_window * window_size_sec,
                 )
             )
 
-    return resultado
+    return result

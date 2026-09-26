@@ -1,9 +1,9 @@
 # test_videos/
 
-Carpeta temporal para subir videos reales de prueba y que Claude los
-procese con el pipeline completo (transcripción, silencios, cortes,
-validación) directamente en una sesión de Claude Code.
+Temporary folder for uploading real test videos so Claude can run the
+full pipeline on them (transcription, silences, cuts, validation)
+directly in a Claude Code session.
 
-**No es parte del producto.** A diferencia de `Crudos/` y `Listos/`, esta
-carpeta SÍ se sube a git a propósito -- así que cualquier video acá es
-público en el repo. Borrar cuando termine el debugging.
+**Not part of the product.** Unlike `Raw/` and `Ready/`, this folder is
+committed to git on purpose -- so any video here is public in the repo.
+Delete it once debugging is done.

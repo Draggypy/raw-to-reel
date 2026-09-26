@@ -13,13 +13,13 @@ Built for vertical content like **Reels, TikTok, and Instagram Stories**.
 </p>
 
 ```
-   Crudos/                         RawToReel                         Listos/
+   Raw/                         RawToReel                         Ready/
 ┌──────────────┐    ┌──────────────────────────────────────┐    ┌──────────────┐
 │ my-video.mp4 │ ─► │ transcribes → detects → cuts →        │ ─► │ my-video.mp4 │
 │ (unedited)   │    │ subtitles → renders → validates       │    │ (edited)     │
 └──────────────┘    └──────────────────────────────────────┘    └──────────────┘
                                    │
-                                   └─► if something fails: Crudos/fallidos/  (the original is never lost)
+                                   └─► if something fails: Raw/failed/  (the original is never lost)
 ```
 
 ---
@@ -29,11 +29,11 @@ Built for vertical content like **Reels, TikTok, and Instagram Stories**.
 1. **Transcribes** the audio locally with [faster-whisper](https://github.com/SYSTRAN/faster-whisper), with word-level timestamps.
 2. **Detects** silences (by the audio's real volume) and filler words ("um", "like", "you know"...). It distinguishes pauses between sentences from the natural rhythm within a sentence, so it doesn't cut you off while you're still talking.
 
-   > **What about repetitions ("I think that... I think this is great")?** RawToReel **does not cut them**, on purpose. When speaking, it's very common to repeat an idea to reinforce or clarify it ("look what happens here... but the opposite could happen... but this happens"), and that's not a speech error — it's a way of explaining yourself. Cutting it automatically ended up deleting parts of the message the user meant to say that way, not by accident. The editor prefers to specialize in what it can confidently tell apart — real silences and filler words — rather than guess when a repetition is a "false start" and when it's emphasis. (The repetition detector is still in the code, turned off via `CORTAR_REPETICIONES = False` in `src/config.py`, for anyone who wants to try it.)
+   > **What about repetitions ("I think that... I think this is great")?** RawToReel **does not cut them**, on purpose. When speaking, it's very common to repeat an idea to reinforce or clarify it ("look what happens here... but the opposite could happen... but this happens"), and that's not a speech error — it's a way of explaining yourself. Cutting it automatically ended up deleting parts of the message the user meant to say that way, not by accident. The editor prefers to specialize in what it can confidently tell apart — real silences and filler words — rather than guess when a repetition is a "false start" and when it's emphasis. (The repetition detector is still in the code, turned off via `CUT_REPETITIONS = False` in `src/config.py`, for anyone who wants to try it.)
 3. **Consolidates the cuts** into the final list of segments to keep, being careful not to leave sub-second scene "flashes".
 4. **Generates subtitles** (`.ass` format) already aligned to the timing of the cut video.
 5. **Cuts and burns in the subtitles** with `ffmpeg`.
-6. **Validates** the result. Only if it passes every check is it delivered to `Listos/`; if not, the video goes to `Crudos/fallidos/` and the original stays untouched.
+6. **Validates** the result. Only if it passes every check is it delivered to `Ready/`; if not, the video goes to `Raw/failed/` and the original stays untouched.
 
 ## Requirements and Technical Specifications
 
@@ -187,7 +187,7 @@ python -m unittest tests/test_core.py -v
 
 If everything's in order, you'll see every test pass with `OK`.
 
-> **Folders ready from the start:** the repository already comes with the `Crudos/` folder (where you drop your videos) and `Listos/` (where you get the final video with subtitles and no silences). You don't need to create any folder by hand; the temp and log folders are managed automatically.
+> **Folders ready from the start:** the repository already comes with the `Raw/` folder (where you drop your videos) and `Ready/` (where you get the final video with subtitles and no silences). You don't need to create any folder by hand; the temp and log folders are managed automatically.
 
 ## How to use it
 
@@ -199,19 +199,19 @@ source venv/bin/activate          # on Windows: .\venv\Scripts\Activate.ps1
 python src/main.py
 ```
 
-1. Copy a video into `Crudos/` (formats: `.mp4`, `.mov`, `.mkv`, `.avi`).
+1. Copy a video into `Raw/` (formats: `.mp4`, `.mov`, `.mkv`, `.avi`).
 2. The program detects it on its own. It waits until the copy is finished (it watches for the file size to stop changing), so you can transfer files from your phone or a USB drive with no issues.
-3. It processes it. When it's done, it appears in `Listos/` **with the same name**.
-4. The original disappears from `Crudos/` **only once the copy in `Listos/` has been verified.**
+3. It processes it. When it's done, it appears in `Ready/` **with the same name**.
+4. The original disappears from `Raw/` **only once the copy in `Ready/` has been verified.**
 
-The program stays running, watching `Crudos/`. It processes **one video at a time**, oldest to newest. To stop it: `Ctrl+C` (it finishes the video currently being processed, then exits).
+The program stays running, watching `Raw/`. It processes **one video at a time**, oldest to newest. To stop it: `Ctrl+C` (it finishes the video currently being processed, then exits).
 
 ### Watching what it's doing
 
 In another terminal, no need to activate the `venv`:
 
 ```bash
-python3 ver_estado.py        # on Windows: python ver_estado.py
+python3 watch_status.py        # on Windows: python watch_status.py
 ```
 
 Shows the live stage of each video:
@@ -223,13 +223,13 @@ Shows the live stage of each video:
 [2026-09-24 12:33:40] (none) -> waiting
 ```
 
-The stages, in order: `extracting audio` → `transcribing` → `detecting silences` → `looking for filler words` → `consolidating cuts` → `generating subtitles` → `cutting and rendering` → `validating` → `moving to Listos`.
+The stages, in order: `extracting audio` → `transcribing` → `detecting silences` → `looking for filler words` → `consolidating cuts` → `generating subtitles` → `cutting and rendering` → `validating` → `moving to Ready`.
 
-The full history is kept in `Logs/editor_gianni.log` (one dated line per event, including how many silences, filler words, and segments it found for each video).
+The full history is kept in `Logs/rawtoreel.log` (one dated line per event, including how many silences, filler words, and segments it found for each video).
 
 ### Keeping it running permanently (Linux, systemd)
 
-If you want it to start with the machine and process whatever you drop into `Crudos/`, you can use a user service. Example (`~/.config/systemd/user/raw-to-reel.service`), adjusting the paths:
+If you want it to start with the machine and process whatever you drop into `Raw/`, you can use a user service. Example (`~/.config/systemd/user/raw-to-reel.service`), adjusting the paths:
 
 ```ini
 [Unit]
@@ -258,45 +258,45 @@ systemctl --user status raw-to-reel.service
 
 ## What happens to your files
 
-- **The original is never touched until the end.** A temporary copy is processed in `Temp/`. Only once the finished copy is in `Listos/` and its size matches the temporary file is the original deleted from `Crudos/`.
-- **If something fails** (empty transcription, an `ffmpeg` error, a failed validation) the original is moved to `Crudos/fallidos/` so it isn't retried in a loop. The cause is recorded in `Logs/editor_gianni.log`.
-- **To retry** a failed video: move it back into `Crudos/`.
-- Everything under `Crudos/`, `Listos/`, `Temp/`, and `Logs/` is in `.gitignore`: your videos never end up in the repository.
+- **The original is never touched until the end.** A temporary copy is processed in `Temp/`. Only once the finished copy is in `Ready/` and its size matches the temporary file is the original deleted from `Raw/`.
+- **If something fails** (empty transcription, an `ffmpeg` error, a failed validation) the original is moved to `Raw/failed/` so it isn't retried in a loop. The cause is recorded in `Logs/rawtoreel.log`.
+- **To retry** a failed video: move it back into `Raw/`.
+- Everything under `Raw/`, `Ready/`, `Temp/`, and `Logs/` is in `.gitignore`: your videos never end up in the repository.
 
 ## Troubleshooting
 
-### The video ended up in `Crudos/fallidos/`
+### The video ended up in `Raw/failed/`
 
 Look for the line in the log — it states the exact reason, no need to guess:
 
 ```bash
-grep -B 15 "Movido a fallidos" Logs/editor_gianni.log | tail -30
+grep -B 15 "Moved to failed" Logs/rawtoreel.log | tail -30
 ```
 
 The most common causes, from most to least frequent:
 
 | Message in the log | What happened | What to do |
 |---|---|---|
-| `El video no tiene pista de audio` / `La pista de audio del video está vacía` ("The video has no audio track" / "The video's audio track is empty") | **The phone recorded video but no audio.** The file has an audio track created but with zero samples (0 bytes of sound) — this happens when another app (a call, a voice recorder, an assistant) had the microphone locked when recording started, or the mic was muted/covered. | Play the video back: if you hear nothing, that confirms it. You'll need to re-record — there's no audio to edit. |
-| `la transcripción no devolvió ninguna palabra` ("the transcription returned no words") | The audio exists and has sound, but Whisper didn't recognize any speech in Spanish: volume too low, too much background noise/echo, the mic too far away, or the clip is of something else (music, ambient sound, noisy silence). | Record closer to the microphone and with less background noise. If you speak another language, adjust `IDIOMA_WHISPER`. |
-| `ffmpeg falló extrayendo audio: ...` ("ffmpeg failed extracting audio") | The video container is broken or `ffmpeg` doesn't recognize the audio/video codec. Could be a file that was recording when something interrupted it (power cut, storage filled up) or an exotic format. | Run `ffprobe your-video.mp4` and check what it says about the streams. If the file looks incomplete, it's a corrupted video, not a bug in the editor. |
-| `ffmpeg falló cortando un tramo` / `ffmpeg falló concatenando` / `ffmpeg falló quemando subtítulos` ("ffmpeg failed cutting a segment / concatenating / burning subtitles") | A specific `ffmpeg` step failed — the full message (in `Logs/editor_gianni.log`, never truncated) carries the actual `ffmpeg` error underneath. | Copy the full message from the log; it almost always states the concrete problem (unsupported codec, out of disk space, subtitle font not found). |
-| `ERROR de validación: pesa sólo N bytes` ("only weighs N bytes") | The final file came out empty or truncated — typically from running out of disk space mid-render. | Check free space in `Temp/` and `Listos/`. |
-| `ERROR de validación: no tiene stream de video/audio` ("has no video/audio stream") | The final file lost a track somewhere in the process (rare; a sign of an incomplete `ffmpeg` build). | Reinstall `ffmpeg`, making sure it has `libass` and complete audio/video codecs (see Requirements). |
-| `ERROR de validación: duración esperada ...` ("expected duration...") | The final video's duration doesn't match the expected one beyond the tolerance margin. Can happen with video recorded at a **variable frame rate** (common on some phones) on very long takes or with a huge number of cuts. | If it's occasional, there's nothing to do: it's safer to reject the video than to deliver one with desync. If it happens every time with the same phone, let us know — there's room to adjust `TOLERANCIA_DURACION_POR_TRAMO_SEG`. |
-| `ERROR de validación: errores decodificando` ("decoding errors") | The final file ended up corrupted somehow (rare — would be an actual bug). | Save the video from `Temp/` (it gets deleted on retry) and report it with the full log. |
+| `The video has no audio track` / `The video's audio track is empty` | **The phone recorded video but no audio.** The file has an audio track created but with zero samples (0 bytes of sound) — this happens when another app (a call, a voice recorder, an assistant) had the microphone locked when recording started, or the mic was muted/covered. | Play the video back: if you hear nothing, that confirms it. You'll need to re-record — there's no audio to edit. |
+| `the transcription returned no words` | The audio exists and has sound, but Whisper didn't recognize any speech in Spanish: volume too low, too much background noise/echo, the mic too far away, or the clip is of something else (music, ambient sound, noisy silence). | Record closer to the microphone and with less background noise. If you speak another language, adjust `WHISPER_LANGUAGE`. |
+| `ffmpeg failed extracting audio: ...` | The video container is broken or `ffmpeg` doesn't recognize the audio/video codec. Could be a file that was recording when something interrupted it (power cut, storage filled up) or an exotic format. | Run `ffprobe your-video.mp4` and check what it says about the streams. If the file looks incomplete, it's a corrupted video, not a bug in the editor. |
+| `ffmpeg failed cutting a segment` / `ffmpeg failed concatenating` / `ffmpeg failed burning subtitles` | A specific `ffmpeg` step failed — the full message (in `Logs/rawtoreel.log`, never truncated) carries the actual `ffmpeg` error underneath. | Copy the full message from the log; it almost always states the concrete problem (unsupported codec, out of disk space, subtitle font not found). |
+| `VALIDATION ERROR: only weighs N bytes` | The final file came out empty or truncated — typically from running out of disk space mid-render. | Check free space in `Temp/` and `Ready/`. |
+| `VALIDATION ERROR: has no video/audio stream` | The final file lost a track somewhere in the process (rare; a sign of an incomplete `ffmpeg` build). | Reinstall `ffmpeg`, making sure it has `libass` and complete audio/video codecs (see Requirements). |
+| `VALIDATION ERROR: expected duration ...` | The final video's duration doesn't match the expected one beyond the tolerance margin. Can happen with video recorded at a **variable frame rate** (common on some phones) on very long takes or with a huge number of cuts. | If it's occasional, there's nothing to do: it's safer to reject the video than to deliver one with desync. If it happens every time with the same phone, let us know — there's room to adjust `DURATION_TOLERANCE_PER_SEGMENT_SEC`. |
+| `VALIDATION ERROR: errors decoding` | The final file ended up corrupted somehow (rare — would be an actual bug). | Save the video from `Temp/` (it gets deleted on retry) and report it with the full log. |
 
-### The video DID make it to `Listos/`, but something looks or sounds off
+### The video DID make it to `Ready/`, but something looks or sounds off
 
 The automatic validation doesn't catch this because the file is technically valid — you have to look at it:
 
 | Symptom | Likely cause | Where to adjust |
 |---|---|---|
-| No subtitles show up, or they look like an ugly/generic font | The font set in `FUENTE_SUBTITULOS` isn't installed on your system; `ffmpeg`/`libass` silently falls back to a default font (not an error). | Install the font you want to use and put its exact name in `FUENTE_SUBTITULOS` (see the licensing note in the Subtitles table). |
-| Subtitles are out of sync with the audio | A sign of real audio/video desync in the result. | Check `Logs/editor_gianni.log` for that video and see how many segments it had — with a huge number of cuts the error margin accumulates (see `TOLERANCIA_DURACION_*` in Configuration). |
-| Still cuts mid-thought, feels like "it cuts the moment I stop talking" | Fine-tuning of sensitivity, not a bug. | Raise `PAUSA_MINIMA_DENTRO_DE_FRASE_MS` and/or `MARGEN_SILENCIO_MS` in `src/config.py`. |
-| Leaves very long silences uncut | The silence threshold is too strict for your background noise level. | Lower `MARGEN_DB_SOBRE_PISO` or carefully raise `UMBRAL_DB_MAX` (see the comments in `config.py` — they're there so you don't break the balance). |
-| Cuts "um"/"like"/"this" ("este"/"tipo") that were actually part of a normal sentence | A filler-word false positive. | Remove that word from `MULETILLAS` (or from `MULETILLAS_AMBIGUAS` if it already requires a pause) in `src/config.py`. |
+| No subtitles show up, or they look like an ugly/generic font | The font set in `SUBTITLE_FONT` isn't installed on your system; `ffmpeg`/`libass` silently falls back to a default font (not an error). | Install the font you want to use and put its exact name in `SUBTITLE_FONT` (see the licensing note in the Subtitles table). |
+| Subtitles are out of sync with the audio | A sign of real audio/video desync in the result. | Check `Logs/rawtoreel.log` for that video and see how many segments it had — with a huge number of cuts the error margin accumulates (see `DURATION_TOLERANCE_*` in Configuration). |
+| Still cuts mid-thought, feels like "it cuts the moment I stop talking" | Fine-tuning of sensitivity, not a bug. | Raise `MIN_MIDSENTENCE_PAUSE_MS` and/or `SILENCE_MARGIN_MS` in `src/config.py`. |
+| Leaves very long silences uncut | The silence threshold is too strict for your background noise level. | Lower `DB_MARGIN_OVER_FLOOR` or carefully raise `DB_THRESHOLD_MAX` (see the comments in `config.py` — they're there so you don't break the balance). |
+| Cuts "um"/"like"/"this" ("este"/"tipo") that were actually part of a normal sentence | A filler-word false positive. | Remove that word from `FILLER_WORDS` (or from `AMBIGUOUS_FILLER_WORDS` if it already requires a pause) in `src/config.py`. |
 
 ---
 
@@ -308,46 +308,46 @@ Everything adjustable lives in a single file: [`src/config.py`](src/config.py). 
 
 | Constant | Default value | What it controls |
 |---|---|---|
-| `DURACION_MINIMA_SILENCIO_MS` | `300` | A pause shorter than this is **not detected** as silence. |
-| `MARGEN_SILENCIO_MS` | `150` | How much silence is left on **each edge** of a cut. At 150, every cut pause leaves ~300 ms of audible silence. Lower it for tighter cuts; raise it if it feels like "it cuts the moment I stop talking". |
-| `CORTE_MINIMO_MS` | `150` | How much a cut has to **save** (margins already subtracted) to be worth the visual jump. Prevents 20 ms micro-cuts that felt like "it cuts out of nowhere". In practice, only pauses of `2 × MARGEN + CORTE_MINIMO` = 450 ms or more get cut. |
-| `PAUSA_MINIMA_DENTRO_DE_FRASE_MS` / `MARGEN_DENTRO_DE_FRASE_MS` | `1000` / `250` | A pause **in the middle of a sentence** (the previous word doesn't end in `.` `?` `!`) is speech rhythm: it's only cut if it lasts 1 s or more, leaving 500 ms of air. Between sentences the normal rule applies. Raise the first one if it feels like it's cutting while you're still talking about the same topic. |
-| `TRAMO_MINIMO_SEG` | `0.5` | Prevents sub-second kept segments (they look like a flicker). |
-| `FUNDIDO_AUDIO_SEG` | `0.012` | Audio fade at each cut edge, so the join doesn't produce a "click". |
-| `MARGEN_DB_SOBRE_PISO` | `17` | Detector sensitivity: the "silence" threshold is the video's own noise floor plus this margin. |
-| `UMBRAL_DB_MAX` | `-35` | The threshold never rises above this, to avoid entering the voice range (soft speech sits around -30 dB). |
-| `SUAVIZADO_SILENCIO_MS` / `HISTERESIS_DB` | `50` / `3` | Smooth the volume curve and keep a soft voice that grazes the threshold from opening and closing silences several times a second. |
-| `MULETILLAS` | `eh, emm, mmm, este, o sea, tipo, digamos` | List of filler words to cut (Spanish). Edit it to match how you speak. |
-| `MULETILLAS_AMBIGUAS` | `este, tipo, o sea` | Filler words that are also real words ("in this video" — "en este video"). Only cut if they have a real pause right next to them. |
-| `CORTAR_REPETICIONES` | `False` | Cut false starts ("I think that... I think that"). **Turned off on purpose**: in practice we repeat an idea to clarify or emphasize it ("look what happens here... but the opposite could happen... but this happens"), not just because we stumble, and automatic cutting doesn't tell the two apart well. Set it to `True` if you'd rather it also try to cut these repetitions. |
-| `VENTANA_REPETICION_SEG` | `1.5` | (Only with `CORTAR_REPETICIONES = True`.) How close together a repetition has to be to count as a false start; it also needs a real pause or a filler word in between. |
+| `MIN_SILENCE_DURATION_MS` | `300` | A pause shorter than this is **not detected** as silence. |
+| `SILENCE_MARGIN_MS` | `150` | How much silence is left on **each edge** of a cut. At 150, every cut pause leaves ~300 ms of audible silence. Lower it for tighter cuts; raise it if it feels like "it cuts the moment I stop talking". |
+| `MIN_CUT_MS` | `150` | How much a cut has to **save** (margins already subtracted) to be worth the visual jump. Prevents 20 ms micro-cuts that felt like "it cuts out of nowhere". In practice, only pauses of `2 × SILENCE_MARGIN_MS + MIN_CUT` = 450 ms or more get cut. |
+| `MIN_MIDSENTENCE_PAUSE_MS` / `MIDSENTENCE_MARGIN_MS` | `1000` / `250` | A pause **in the middle of a sentence** (the previous word doesn't end in `.` `?` `!`) is speech rhythm: it's only cut if it lasts 1 s or more, leaving 500 ms of air. Between sentences the normal rule applies. Raise the first one if it feels like it's cutting while you're still talking about the same topic. |
+| `MIN_SEGMENT_SEC` | `0.5` | Prevents sub-second kept segments (they look like a flicker). |
+| `AUDIO_FADE_SEC` | `0.012` | Audio fade at each cut edge, so the join doesn't produce a "click". |
+| `DB_MARGIN_OVER_FLOOR` | `17` | Detector sensitivity: the "silence" threshold is the video's own noise floor plus this margin. |
+| `DB_THRESHOLD_MAX` | `-35` | The threshold never rises above this, to avoid entering the voice range (soft speech sits around -30 dB). |
+| `SILENCE_SMOOTHING_MS` / `HYSTERESIS_DB` | `50` / `3` | Smooth the volume curve and keep a soft voice that grazes the threshold from opening and closing silences several times a second. |
+| `FILLER_WORDS` | `eh, emm, mmm, este, o sea, tipo, digamos` | List of filler words to cut (Spanish). Edit it to match how you speak. |
+| `AMBIGUOUS_FILLER_WORDS` | `este, tipo, o sea` | Filler words that are also real words ("in this video" — "en este video"). Only cut if they have a real pause right next to them. |
+| `CUT_REPETITIONS` | `False` | Cut false starts ("I think that... I think that"). **Turned off on purpose**: in practice we repeat an idea to clarify or emphasize it ("look what happens here... but the opposite could happen... but this happens"), not just because we stumble, and automatic cutting doesn't tell the two apart well. Set it to `True` if you'd rather it also try to cut these repetitions. |
+| `REPETITION_WINDOW_SEC` | `1.5` | (Only with `CUT_REPETITIONS = True`.) How close together a repetition has to be to count as a false start; it also needs a real pause or a filler word in between. |
 
 ### Transcription
 
 | Constant | Default value | What it controls |
 |---|---|---|
-| `IDIOMA_WHISPER` | `"es"` | Spoken language. **Built for Spanish**: the filler-word list is too. |
-| `MODELO_WHISPER` | `"small"` | Model size. `"base"` uses less RAM; `"medium"` transcribes better but is slower. |
-| `DEVICE_WHISPER` / `COMPUTE_TYPE_WHISPER` | `"cpu"` / `"int8"` | With an NVIDIA GPU you can use `"cuda"` and `"float16"`. |
+| `WHISPER_LANGUAGE` | `"es"` | Spoken language. **Built for Spanish**: the filler-word list is too. |
+| `WHISPER_MODEL` | `"small"` | Model size. `"base"` uses less RAM; `"medium"` transcribes better but is slower. |
+| `WHISPER_DEVICE` / `WHISPER_COMPUTE_TYPE` | `"cpu"` / `"int8"` | With an NVIDIA GPU you can use `"cuda"` and `"float16"`. |
 
 ### Subtitles
 
 | Constant | Default value | What it controls |
 |---|---|---|
-| `FUENTE_SUBTITULOS` | see note | **Font. Change it to one you have installed** (e.g. `"Arial"` or `"DejaVu Sans"`). |
-| `MAX_PALABRAS_POR_CAPTION` | `1` | Words per subtitle (1 = word by word, Reels style). |
-| `FRACCION_TAMANO_FUENTE` | `0.075` | Font size as a fraction of the video's height. |
-| `FRACCION_MARGEN_INFERIOR` | `0.20` | Distance from the bottom edge (keeps the Instagram UI area clear). |
-| `ESCALA_VERTICAL_SUBTITULOS` / `TRACKING_SUBTITULOS` | `125` / `-8` | Stretch the letters vertically and tighten letter spacing. |
+| `SUBTITLE_FONT` | see note | **Font. Change it to one you have installed** (e.g. `"Arial"` or `"DejaVu Sans"`). |
+| `MAX_WORDS_PER_CAPTION` | `1` | Words per subtitle (1 = word by word, Reels style). |
+| `FONT_SIZE_FRACTION` | `0.075` | Font size as a fraction of the video's height. |
+| `BOTTOM_MARGIN_FRACTION` | `0.20` | Distance from the bottom edge (keeps the Instagram UI area clear). |
+| `SUBTITLE_VERTICAL_SCALE` / `SUBTITLE_TRACKING` | `125` / `-8` | Stretch the letters vertically and tighten letter spacing. |
 
-> **About the font:** the default value points to a commercial typeface that **is not distributed with this repository**. If you don't have it installed, the render falls back to the system's default font. For a consistent result, pick a font you own and put its name in `FUENTE_SUBTITULOS`. If the font you use has its own license, respect it.
+> **About the font:** the default value points to a commercial typeface that **is not distributed with this repository**. If you don't have it installed, the render falls back to the system's default font. For a consistent result, pick a font you own and put its name in `SUBTITLE_FONT`. If the font you use has its own license, respect it.
 
 ### Render quality and speed
 
 | Constant | Default | What it controls |
 |---|---|---|
-| `PRESET_SEGMENTO` / `CRF_SEGMENTO` | `ultrafast` / `18` | Encoding of the intermediate segments (deleted once done). |
-| `PRESET_FINAL` / `CRF_FINAL` | `veryfast` / `21` | Encoding of the final video. **This defines the real quality of the file you publish.** For higher quality: preset `medium` and CRF `18` (slower). |
+| `SEGMENT_PRESET` / `SEGMENT_CRF` | `ultrafast` / `18` | Encoding of the intermediate segments (deleted once done). |
+| `FINAL_PRESET` / `FINAL_CRF` | `veryfast` / `21` | Encoding of the final video. **This defines the real quality of the file you publish.** For higher quality: preset `medium` and CRF `18` (slower). |
 
 ---
 
@@ -358,16 +358,16 @@ A single program (`src/main.py`) acts as both watcher and processor: it scans, p
 | Module | What it does |
 |---|---|
 | `main.py` | The main loop and pipeline orchestration. Handles `Ctrl+C`/`SIGTERM` with a clean shutdown. |
-| `scanner.py` | Picks the next video from `Crudos/` and confirms the file is **stable** (two size checks) so it doesn't grab one mid-copy. |
+| `scanner.py` | Picks the next video from `Raw/` and confirms the file is **stable** (two size checks) so it doesn't grab one mid-copy. |
 | `transcription.py` | Extracts the audio to a mono 16 kHz WAV and transcribes it with faster-whisper. **Loads the model and releases it for every video** so memory doesn't build up from one video to the next. |
 | `silence_detector.py` | Silence detection over the audio using numpy. Uses an **adaptive threshold**: the video's own noise floor (10th percentile of volume, with a ceiling) plus a margin, capped to a range. |
-| `repetition_detector.py` | Filler words by list (active). Also detects repetitions via exact n-grams (2 to 6 words) close together, but **cutting them is turned off** (`CORTAR_REPETICIONES`, see Configuration): repeating an idea to clarify it isn't an error to fix. **No extra AI: it's all rules.** |
-| `cut_manager.py` | Turns cuts into **segments to keep**; merges cuts that are too close together; enforces the minimum segment length; and translates times from the original timeline to the already-cut one (`remapear_intervalo`). It's the central module. |
+| `repetition_detector.py` | Filler words by list (active). Also detects repetitions via exact n-grams (2 to 6 words) close together, but **cutting them is turned off** (`CUT_REPETITIONS`, see Configuration): repeating an idea to clarify it isn't an error to fix. **No extra AI: it's all rules.** |
+| `cut_manager.py` | Turns cuts into **segments to keep**; merges cuts that are too close together; enforces the minimum segment length; and translates times from the original timeline to the already-cut one (`remap_interval`). It's the central module. |
 | `subtitle_generator.py` | Remaps words onto the cut video, groups them into captions, and writes the `.ass` file. |
 | `video_processor.py` | Everything `ffmpeg`-related: cutting by segment, concatenation, and burning in subtitles. |
 | `validator.py` | Checks on the final file (see below). |
-| `file_manager.py` | The safe choreography of delivering to `Listos/` and only then deleting the original. |
-| `logger.py` | Text log + `Logs/estado.json` (atomic write) that `ver_estado.py` reads. |
+| `file_manager.py` | The safe choreography of delivering to `Ready/` and only then deleting the original. |
+| `logger.py` | Text log + `Logs/status.json` (atomic write) that `watch_status.py` reads. |
 
 ### Design decisions worth knowing
 
@@ -378,7 +378,7 @@ A single program (`src/main.py`) acts as both watcher and processor: it scans, p
 - **It doesn't assume a constant frame rate.** Phones record at a variable frame rate; cutting with `select+setpts` assuming a constant one produces audio/video desync. Here, video and audio are cut using the same interval.
 - **Only the final pass re-encodes at real quality.** The intermediate segments are encoded fast (`ultrafast`) and discarded.
 - **Subtitles are remapped, not re-transcribed:** the transcription's words are shifted onto the already-cut timing, and a word that's no longer in the final video doesn't produce a subtitle.
-- **Filler words are cut every time they appear on the list**, without requiring a pause around them (Whisper almost never leaves timestamps with that clean a gap). The cost: "este" and "tipo" are also real words, and sometimes a legitimate use gets cut. If it bothers you, remove them from `MULETILLAS`.
+- **Filler words are cut every time they appear on the list**, without requiring a pause around them (Whisper almost never leaves timestamps with that clean a gap). The cost: "este" and "tipo" are also real words, and sometimes a legitimate use gets cut. If it bothers you, remove them from `FILLER_WORDS`.
 
 ### How the result is validated
 
@@ -393,7 +393,7 @@ Before delivering, `validator.py` runs these checks from cheapest to most expens
 
 ## Known limits
 
-- **Spanish first.** The language and the filler-word list are configured for Spanish; for another language you'll need to change `IDIOMA_WHISPER` and `MULETILLAS`.
+- **Spanish first.** The language and the filler-word list are configured for Spanish; for another language you'll need to change `WHISPER_LANGUAGE` and `FILLER_WORDS`.
 - **One video at a time.** No parallel processing (on purpose: it's easier on memory).
 - **Built for one person talking to camera.** It's not a general-purpose editor: no transitions, music, zoom, or B-roll.
 - **Subtitles and cuts are tuned to taste.** The defaults come from real-world use, but every voice and every microphone is different: try it with a short video and adjust `config.py`.
@@ -408,14 +408,14 @@ Before delivering, `validator.py` runs these checks from cheapest to most expens
 | `'python' is not recognized as an internal or external command` (Windows) | The **"Add python.exe to PATH"** box wasn't checked when installing Python. Reopen the downloaded Python installer, choose **Modify**, and check the option to add it to PATH. |
 | `ExecutionPolicy` error / "running scripts is disabled" (Windows) | In PowerShell run: `Set-ExecutionPolicy -Scope CurrentUser RemoteSigned` (confirm with `Y`) and activate again with `.\venv\Scripts\Activate.ps1`. |
 | `ffmpeg` / `ffprobe` "not found" or not recognized | They're not in the system `PATH`. On Windows: `winget install Gyan.FFmpeg` and restart PowerShell. On Linux: `sudo apt install ffmpeg`. On Mac: `brew install ffmpeg`. |
-| I drop a video and nothing happens | Is the video inside the `Crudos/` folder? Is the extension `.mp4`, `.mov`, `.mkv`, or `.avi`? Is `python src/main.py` running? |
-| The video ended up in `Crudos/fallidos/` | Open `Logs/editor_gianni.log`: the line with `ERROR` states why. |
-| "la transcripción no devolvió ninguna palabra" ("the transcription returned no words") | The audio is empty or unintelligible. Check that the video has speech in it. |
-| Subtitles come out in a font that isn't the one I wanted | Change `FUENTE_SUBTITULOS` to a font you have installed. |
-| Cuts too much / feels "rushed" | Raise `DURACION_MINIMA_SILENCIO_MS` and/or `MARGEN_SILENCIO_MS`. |
-| Long silences are left in | Lower `DURACION_MINIMA_SILENCIO_MS` or raise `MARGEN_DB_SOBRE_PISO`. |
-| Cuts soft speech as if it were silence | Lower `MARGEN_DB_SOBRE_PISO`. |
-| Runs out of memory | Use `MODELO_WHISPER = "base"` and, in the service, `MemoryMax`. |
+| I drop a video and nothing happens | Is the video inside the `Raw/` folder? Is the extension `.mp4`, `.mov`, `.mkv`, or `.avi`? Is `python src/main.py` running? |
+| The video ended up in `Raw/failed/` | Open `Logs/rawtoreel.log`: the line with `ERROR` states why. |
+| "the transcription returned no words" | The audio is empty or unintelligible. Check that the video has speech in it. |
+| Subtitles come out in a font that isn't the one I wanted | Change `SUBTITLE_FONT` to a font you have installed. |
+| Cuts too much / feels "rushed" | Raise `MIN_SILENCE_DURATION_MS` and/or `SILENCE_MARGIN_MS`. |
+| Long silences are left in | Lower `MIN_SILENCE_DURATION_MS` or raise `DB_MARGIN_OVER_FLOOR`. |
+| Cuts soft speech as if it were silence | Lower `DB_MARGIN_OVER_FLOOR`. |
+| Runs out of memory | Use `WHISPER_MODEL = "base"` and, in the service, `MemoryMax`. |
 
 ## Repository structure
 
@@ -435,17 +435,17 @@ raw-to-reel/
 │   ├── subtitle_generator.py    # captions + .ass file
 │   ├── video_processor.py       # ffmpeg: cutting, joining, burning subtitles
 │   ├── validator.py             # checks on the result
-│   ├── file_manager.py          # safe delivery to Listos/
-│   └── logger.py                # log + estado.json
+│   ├── file_manager.py          # safe delivery to Ready/
+│   └── logger.py                # log + status.json
 ├── tests/
 │   └── test_core.py             # unit and integration test suite
-├── ver_estado.py                # watch progress live
+├── watch_status.py                # watch progress live
 ├── requirements.txt
 ├── LICENSE
 └── README.md
 ```
 
-Folders created on use (ignored by git): `Crudos/`, `Crudos/fallidos/`, `Listos/`, `Temp/`, `Logs/`.
+Folders created on use (ignored by git): `Raw/`, `Raw/failed/`, `Ready/`, `Temp/`, `Logs/`.
 
 ---
 
@@ -467,7 +467,7 @@ pip install -r requirements.txt --upgrade
 ### Feedback and suggestions
 
 Since it's still growing, **community feedback and reports are key**:
-* If you find a cut that didn't come out as expected, or a word that behaved strangely, open an [**Issue**](https://github.com/Draggypy/raw-to-reel/issues) on GitHub including the relevant excerpt from `Logs/editor_gianni.log`.
+* If you find a cut that didn't come out as expected, or a word that behaved strangely, open an [**Issue**](https://github.com/Draggypy/raw-to-reel/issues) on GitHub including the relevant excerpt from `Logs/rawtoreel.log`.
 * Suggestions, ideas, and Pull Requests are very welcome to keep maturing the project!
 
 ---

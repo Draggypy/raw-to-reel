@@ -1,5 +1,6 @@
-"""Pruebas unitarias y de compatibilidad multiplataforma (Linux / Windows) para RawToReel.
-Corre con unittest estándar de Python (sin dependencias adicionales requeridas).
+"""Unit and cross-platform (Linux / Windows) compatibility tests for
+RawToReel. Runs with Python's standard unittest (no extra dependencies
+required).
 """
 
 import os
@@ -9,351 +10,352 @@ import tempfile
 import subprocess
 from pathlib import Path
 
-# Agregar src al sys.path
-RAIZ = Path(__file__).resolve().parent.parent
-sys.path.insert(0, str(RAIZ / "src"))
+# Add src to sys.path
+ROOT = Path(__file__).resolve().parent.parent
+sys.path.insert(0, str(ROOT / "src"))
 
 import numpy as np
 
 import config
 import cut_manager
-from cut_manager import Corte, Tramo
+from cut_manager import Cut, Segment
 import repetition_detector
 import silence_detector
-from silence_detector import Silencio
-from transcription import Palabra
+from silence_detector import Silence
+from transcription import Word
 import subtitle_generator
 from subtitle_generator import Caption
 import transcription
 import video_processor
 
-MARGEN = config.MARGEN_SILENCIO_MS / 1000
-MARGEN_FRASE = config.MARGEN_DENTRO_DE_FRASE_MS / 1000
-PAUSA_FRASE = config.PAUSA_MINIMA_DENTRO_DE_FRASE_MS / 1000
-CORTE_MINIMO = config.CORTE_MINIMO_MS / 1000
+MARGIN = config.SILENCE_MARGIN_MS / 1000
+MIDSENTENCE_MARGIN = config.MIDSENTENCE_MARGIN_MS / 1000
+MIDSENTENCE_PAUSE = config.MIN_MIDSENTENCE_PAUSE_MS / 1000
+MIN_CUT = config.MIN_CUT_MS / 1000
 
 
 class TestCutManager(unittest.TestCase):
 
-    def test_cortes_desde_silencios(self):
-        silencios = [
-            Silencio(inicio=1.0, fin=3.0),
-            Silencio(inicio=5.0, fin=5.1), # Muy corto para margen
+    def test_cuts_from_silences(self):
+        silences = [
+            Silence(start=1.0, end=3.0),
+            Silence(start=5.0, end=5.1),  # Too short for the margin
         ]
-        cortes = cut_manager.cortes_desde_silencios(silencios)
-        self.assertEqual(len(cortes), 1)
-        # El corte debe respetar el margen de seguridad
-        self.assertAlmostEqual(cortes[0].inicio, 1.0 + MARGEN)
-        self.assertAlmostEqual(cortes[0].fin, 3.0 - MARGEN)
+        cuts = cut_manager.cuts_from_silences(silences)
+        self.assertEqual(len(cuts), 1)
+        # The cut must respect the safety margin
+        self.assertAlmostEqual(cuts[0].start, 1.0 + MARGIN)
+        self.assertAlmostEqual(cuts[0].end, 3.0 - MARGIN)
 
-    def test_micro_corte_se_descarta(self):
-        # Pausa apenas por encima del silencio mínimo: tras los dos márgenes
-        # quedaría un corte de ~20ms -- un salto visual a cambio de nada.
-        justo_por_debajo = 2 * MARGEN + CORTE_MINIMO - 0.02
-        justo_por_encima = 2 * MARGEN + CORTE_MINIMO + 0.02
-        silencios = [
-            Silencio(inicio=1.0, fin=1.0 + justo_por_debajo),
-            Silencio(inicio=5.0, fin=5.0 + justo_por_encima),
+    def test_micro_cut_is_discarded(self):
+        # Pause just above the minimum silence: after both margins it
+        # would leave a ~20ms cut -- a visual jump for nothing.
+        just_below = 2 * MARGIN + MIN_CUT - 0.02
+        just_above = 2 * MARGIN + MIN_CUT + 0.02
+        silences = [
+            Silence(start=1.0, end=1.0 + just_below),
+            Silence(start=5.0, end=5.0 + just_above),
         ]
-        cortes = cut_manager.cortes_desde_silencios(silencios)
-        self.assertEqual(len(cortes), 1)
-        self.assertAlmostEqual(cortes[0].inicio, 5.0 + MARGEN)
+        cuts = cut_manager.cuts_from_silences(silences)
+        self.assertEqual(len(cuts), 1)
+        self.assertAlmostEqual(cuts[0].start, 5.0 + MARGIN)
 
-    def test_corte_no_pisa_inicio_de_palabra(self):
-        # Volumen dice silencio de 1.0 a 3.0, pero Whisper oyó una palabra
-        # que arranca en 2.0: es voz baja, el corte termina un margen antes.
-        silencios = [Silencio(inicio=1.0, fin=3.0)]
-        palabras = [Palabra("bajito", 2.0, 2.4)]
-        cortes = cut_manager.cortes_desde_silencios(silencios, palabras)
-        self.assertEqual(len(cortes), 1)
-        self.assertAlmostEqual(cortes[0].inicio, 1.0 + MARGEN)
-        self.assertAlmostEqual(cortes[0].fin, 2.0 - MARGEN)
+    def test_cut_does_not_step_on_word_start(self):
+        # Volume says silence from 1.0 to 3.0, but Whisper heard a word
+        # starting at 2.0: that's soft voice, the cut ends a margin before it.
+        silences = [Silence(start=1.0, end=3.0)]
+        words = [Word("soft", 2.0, 2.4)]
+        cuts = cut_manager.cuts_from_silences(silences, words)
+        self.assertEqual(len(cuts), 1)
+        self.assertAlmostEqual(cuts[0].start, 1.0 + MARGIN)
+        self.assertAlmostEqual(cuts[0].end, 2.0 - MARGIN)
 
-    def test_corte_con_palabra_al_inicio_se_descarta(self):
-        # Una palabra que arranca casi al principio del silencio no deja
-        # nada útil para cortar.
-        silencios = [Silencio(inicio=1.0, fin=3.0)]
-        palabras = [Palabra("si", 1.1, 1.3)]
-        self.assertEqual(cut_manager.cortes_desde_silencios(silencios, palabras), [])
+    def test_cut_with_word_at_the_start_is_discarded(self):
+        # A word starting almost at the beginning of the silence leaves
+        # nothing useful to cut.
+        silences = [Silence(start=1.0, end=3.0)]
+        words = [Word("yes", 1.1, 1.3)]
+        self.assertEqual(cut_manager.cuts_from_silences(silences, words), [])
 
-    def test_palabra_fuera_del_silencio_no_afecta(self):
-        silencios = [Silencio(inicio=1.0, fin=3.0)]
-        palabras = [Palabra("antes.", 0.2, 0.9), Palabra("Despues", 3.0, 3.5)]
-        cortes = cut_manager.cortes_desde_silencios(silencios, palabras)
-        self.assertEqual(len(cortes), 1)
-        self.assertAlmostEqual(cortes[0].fin, 3.0 - MARGEN)
+    def test_word_outside_the_silence_has_no_effect(self):
+        silences = [Silence(start=1.0, end=3.0)]
+        words = [Word("before.", 0.2, 0.9), Word("After", 3.0, 3.5)]
+        cuts = cut_manager.cuts_from_silences(silences, words)
+        self.assertEqual(len(cuts), 1)
+        self.assertAlmostEqual(cuts[0].end, 3.0 - MARGIN)
 
-    def test_pausa_corta_dentro_de_frase_no_se_corta(self):
-        # "estamos hablando [0.8s] de un tema": respiración en medio de la
-        # frase, ritmo del habla -- no se toca aunque supere el mínimo general.
-        palabras = [Palabra("estamos", 0.0, 0.5), Palabra("hablando", 0.5, 1.0), Palabra("de", 1.8, 2.0)]
-        silencios = [Silencio(inicio=1.0, fin=1.0 + PAUSA_FRASE - 0.2)]
-        self.assertEqual(cut_manager.cortes_desde_silencios(silencios, palabras), [])
+    def test_short_midsentence_pause_is_not_cut(self):
+        # "we are talking [0.8s] about a topic": a breath mid-sentence,
+        # speech rhythm -- not touched even if it exceeds the general minimum.
+        words = [Word("we", 0.0, 0.5), Word("are", 0.5, 1.0), Word("talking", 1.8, 2.0)]
+        silences = [Silence(start=1.0, end=1.0 + MIDSENTENCE_PAUSE - 0.2)]
+        self.assertEqual(cut_manager.cuts_from_silences(silences, words), [])
 
-    def test_pausa_larga_dentro_de_frase_se_corta_dejando_mas_aire(self):
-        palabras = [Palabra("estamos", 0.0, 0.5), Palabra("hablando", 0.5, 1.0), Palabra("de", 2.6, 2.8)]
-        silencios = [Silencio(inicio=1.0, fin=2.6)]
-        cortes = cut_manager.cortes_desde_silencios(silencios, palabras)
-        self.assertEqual(len(cortes), 1)
-        self.assertAlmostEqual(cortes[0].inicio, 1.0 + MARGEN_FRASE)
-        self.assertAlmostEqual(cortes[0].fin, 2.6 - MARGEN_FRASE)
+    def test_long_midsentence_pause_is_cut_leaving_more_air(self):
+        words = [Word("we", 0.0, 0.5), Word("are", 0.5, 1.0), Word("talking", 2.6, 2.8)]
+        silences = [Silence(start=1.0, end=2.6)]
+        cuts = cut_manager.cuts_from_silences(silences, words)
+        self.assertEqual(len(cuts), 1)
+        self.assertAlmostEqual(cuts[0].start, 1.0 + MIDSENTENCE_MARGIN)
+        self.assertAlmostEqual(cuts[0].end, 2.6 - MIDSENTENCE_MARGIN)
 
-    def test_pausa_entre_frases_se_corta_con_margen_normal(self):
-        palabras = [Palabra("tema.", 0.5, 1.0), Palabra("Ahora", 1.6, 1.9)]
-        silencios = [Silencio(inicio=1.0, fin=1.6)]
-        cortes = cut_manager.cortes_desde_silencios(silencios, palabras)
-        self.assertEqual(len(cortes), 1)
-        self.assertAlmostEqual(cortes[0].inicio, 1.0 + MARGEN)
-        self.assertAlmostEqual(cortes[0].fin, 1.6 - MARGEN)
+    def test_pause_between_sentences_is_cut_with_normal_margin(self):
+        words = [Word("topic.", 0.5, 1.0), Word("Now", 1.6, 1.9)]
+        silences = [Silence(start=1.0, end=1.6)]
+        cuts = cut_manager.cuts_from_silences(silences, words)
+        self.assertEqual(len(cuts), 1)
+        self.assertAlmostEqual(cuts[0].start, 1.0 + MARGIN)
+        self.assertAlmostEqual(cuts[0].end, 1.6 - MARGIN)
 
-    def test_coma_y_puntos_suspensivos(self):
-        silencios = [Silencio(inicio=1.0, fin=1.8)]
-        con_coma = [Palabra("tema,", 0.5, 1.0)]
-        self.assertEqual(cut_manager.cortes_desde_silencios(silencios, con_coma), [])
-        con_suspensivos = [Palabra("tema...", 0.5, 1.0)]
-        self.assertEqual(len(cut_manager.cortes_desde_silencios(silencios, con_suspensivos)), 1)
+    def test_comma_and_ellipsis(self):
+        silences = [Silence(start=1.0, end=1.8)]
+        with_comma = [Word("topic,", 0.5, 1.0)]
+        self.assertEqual(cut_manager.cuts_from_silences(silences, with_comma), [])
+        with_ellipsis = [Word("topic...", 0.5, 1.0)]
+        self.assertEqual(len(cut_manager.cuts_from_silences(silences, with_ellipsis)), 1)
 
-    def test_remapear_intervalo(self):
-        # Video de 10s cortado: conserva [0, 2] y [4, 7]
-        tramos = [Tramo(inicio=0.0, fin=2.0), Tramo(inicio=4.0, fin=7.0)]
-        
-        # Una palabra en [0.5, 1.5] en el tramo 1
-        remapeado = cut_manager.remapear_intervalo(0.5, 1.5, tramos)
-        self.assertIsNotNone(remapeado)
-        self.assertAlmostEqual(remapeado[0], 0.5)
-        self.assertAlmostEqual(remapeado[1], 1.5)
+    def test_remap_interval(self):
+        # A 10s video, cut: keeps [0, 2] and [4, 7]
+        segments = [Segment(start=0.0, end=2.0), Segment(start=4.0, end=7.0)]
 
-        # Una palabra en [4.5, 5.5] en el tramo 2 (tiempo nuevo = 2 + (4.5 - 4) = 2.5)
-        remapeado2 = cut_manager.remapear_intervalo(4.5, 5.5, tramos)
-        self.assertIsNotNone(remapeado2)
-        self.assertAlmostEqual(remapeado2[0], 2.5)
-        self.assertAlmostEqual(remapeado2[1], 3.5)
+        # A word in [0.5, 1.5] within segment 1
+        remapped = cut_manager.remap_interval(0.5, 1.5, segments)
+        self.assertIsNotNone(remapped)
+        self.assertAlmostEqual(remapped[0], 0.5)
+        self.assertAlmostEqual(remapped[1], 1.5)
 
-        # Una palabra en [2.5, 3.5] (zona eliminada)
-        remapeado_vacio = cut_manager.remapear_intervalo(2.5, 3.5, tramos)
-        self.assertIsNone(remapeado_vacio)
+        # A word in [4.5, 5.5] within segment 2 (new time = 2 + (4.5 - 4) = 2.5)
+        remapped2 = cut_manager.remap_interval(4.5, 5.5, segments)
+        self.assertIsNotNone(remapped2)
+        self.assertAlmostEqual(remapped2[0], 2.5)
+        self.assertAlmostEqual(remapped2[1], 3.5)
+
+        # A word in [2.5, 3.5] (removed zone)
+        remapped_empty = cut_manager.remap_interval(2.5, 3.5, segments)
+        self.assertIsNone(remapped_empty)
 
 
-def _db_sintetico(*tramos):
-    """Curva de dB en ventanas de VENTANA_SILENCIO_MS: (duracion_seg, nivel_db)."""
-    ventana = config.VENTANA_SILENCIO_MS / 1000
-    partes = [np.full(round(dur / ventana), nivel, dtype=float) for dur, nivel in tramos]
-    return np.concatenate(partes)
+def _synthetic_db(*segments):
+    """dB curve in SILENCE_WINDOW_MS windows: (duration_sec, level_db)."""
+    window = config.SILENCE_WINDOW_MS / 1000
+    parts = [np.full(round(dur / window), level, dtype=float) for dur, level in segments]
+    return np.concatenate(parts)
 
 
 class TestSilenceDetector(unittest.TestCase):
 
-    def test_pausa_clara_se_detecta(self):
-        db = _db_sintetico((2.0, -25.0), (1.0, -50.0), (2.0, -25.0))
-        silencios = silence_detector._silencios_desde_db(db)
-        self.assertEqual(len(silencios), 1)
-        self.assertAlmostEqual(silencios[0].inicio, 2.0, delta=0.06)
-        self.assertAlmostEqual(silencios[0].fin, 3.0, delta=0.06)
+    def test_clear_pause_is_detected(self):
+        db = _synthetic_db((2.0, -25.0), (1.0, -50.0), (2.0, -25.0))
+        silences = silence_detector._silences_from_db(db)
+        self.assertEqual(len(silences), 1)
+        self.assertAlmostEqual(silences[0].start, 2.0, delta=0.06)
+        self.assertAlmostEqual(silences[0].end, 3.0, delta=0.06)
 
-    def test_voz_baja_no_es_silencio(self):
-        # Voz floja a -30dB (dentro del rango medido de voz) en un video con
-        # piso alto: antes el umbral podía subir hasta -28 y cortarla.
-        db = _db_sintetico((2.0, -22.0), (1.0, -30.0), (2.0, -22.0))
-        self.assertEqual(silence_detector._silencios_desde_db(db), [])
+    def test_soft_voice_is_not_silence(self):
+        # Soft voice at -30dB (within the measured voice range) on a video
+        # with a high floor: the threshold used to be able to rise to -28
+        # and cut it.
+        db = _synthetic_db((2.0, -22.0), (1.0, -30.0), (2.0, -22.0))
+        self.assertEqual(silence_detector._silences_from_db(db), [])
 
-    def test_oscilacion_alrededor_del_umbral_no_fragmenta(self):
-        # Voz que roza el umbral, alternando cada 10ms +-2dB alrededor de un
-        # umbral de ~-38dB: sin suavizado ni histéresis esto daba decenas de
-        # cortes de una ventana. Debe dar cero silencios.
-        piso = _db_sintetico((1.0, -55.0))
-        voz = _db_sintetico((2.0, -25.0))
-        oscilante = np.tile([-36.0, -40.0], 50)  # 1s alternando
-        db = np.concatenate([piso, voz, oscilante, voz])
-        silencios = silence_detector._silencios_desde_db(db)
-        # el único silencio es el piso inicial; la zona oscilante (3s-4s) no
-        self.assertEqual(len(silencios), 1)
-        self.assertLessEqual(silencios[0].fin, 1.06)
+    def test_oscillation_around_threshold_does_not_fragment(self):
+        # Voice grazing the threshold, alternating every 10ms +-2dB around a
+        # threshold of ~-38dB: without smoothing or hysteresis this used to
+        # produce dozens of one-window cuts. Should yield zero silences.
+        floor = _synthetic_db((1.0, -55.0))
+        voice = _synthetic_db((2.0, -25.0))
+        oscillating = np.tile([-36.0, -40.0], 50)  # 1s alternating
+        db = np.concatenate([floor, voice, oscillating, voice])
+        silences = silence_detector._silences_from_db(db)
+        # the only silence is the initial floor; the oscillating zone (3s-4s) isn't
+        self.assertEqual(len(silences), 1)
+        self.assertLessEqual(silences[0].end, 1.06)
 
-    def test_histeresis_cierra_silencio_ante_voz(self):
-        # Silencio real seguido de una palabra apenas por encima del umbral:
-        # el silencio tiene que cerrarse ahí, no comerse la palabra.
-        db = _db_sintetico((1.0, -55.0), (1.0, -25.0), (1.0, -55.0), (0.5, -37.0), (1.0, -25.0))
-        silencios = silence_detector._silencios_desde_db(db)
-        self.assertEqual(len(silencios), 2)
-        self.assertAlmostEqual(silencios[1].fin, 3.0, delta=0.06)
+    def test_hysteresis_closes_silence_on_voice(self):
+        # Real silence followed by a word just above the threshold: the
+        # silence has to close right there, not eat into the word.
+        db = _synthetic_db((1.0, -55.0), (1.0, -25.0), (1.0, -55.0), (0.5, -37.0), (1.0, -25.0))
+        silences = silence_detector._silences_from_db(db)
+        self.assertEqual(len(silences), 2)
+        self.assertAlmostEqual(silences[1].end, 3.0, delta=0.06)
 
 
-class TestMuletillas(unittest.TestCase):
+class TestFillerWords(unittest.TestCase):
 
-    def _palabras(self, *textos, paso=0.3):
-        # Whisper estira el fin de cada palabra hasta el inicio de la siguiente
-        return [Palabra(t, i * paso, (i + 1) * paso) for i, t in enumerate(textos)]
+    def _words(self, *texts, step=0.3):
+        # Whisper stretches the end of each word up to the start of the next one
+        return [Word(t, i * step, (i + 1) * step) for i, t in enumerate(texts)]
 
-    def test_muletilla_inequivoca_se_corta_siempre(self):
-        palabras = self._palabras("yo", "eh", "creo")
-        cortes = repetition_detector.detectar_muletillas(palabras)
-        self.assertEqual(len(cortes), 1)
-        self.assertAlmostEqual(cortes[0].inicio, 0.3)
-        # guarda antes del inicio de "creo"
-        self.assertAlmostEqual(cortes[0].fin, 0.6 - config.GUARDA_ONSET_SEG)
+    def test_unambiguous_filler_word_is_always_cut(self):
+        words = self._words("yo", "eh", "creo")
+        cuts = repetition_detector.detect_filler_words(words)
+        self.assertEqual(len(cuts), 1)
+        self.assertAlmostEqual(cuts[0].start, 0.3)
+        # guard before the start of "creo"
+        self.assertAlmostEqual(cuts[0].end, 0.6 - config.ONSET_GUARD_SEC)
 
-    def test_este_en_frase_fluida_no_se_corta(self):
-        palabras = self._palabras("en", "este", "video", "vamos")
-        self.assertEqual(repetition_detector.detectar_muletillas(palabras, []), [])
+    def test_este_in_a_fluent_sentence_is_not_cut(self):
+        words = self._words("en", "este", "video", "vamos")
+        self.assertEqual(repetition_detector.detect_filler_words(words, []), [])
 
-    def test_este_con_pausa_pegada_se_corta(self):
-        # "este" dubitativo: Whisper lo estira sobre la pausa que le sigue
-        palabras = [
-            Palabra("y", 0.0, 0.3),
-            Palabra("este", 0.3, 1.5),
-            Palabra("bueno", 1.5, 1.9),
+    def test_este_with_adjacent_pause_is_cut(self):
+        # hesitant "este": Whisper stretches it over the pause that follows
+        words = [
+            Word("y", 0.0, 0.3),
+            Word("este", 0.3, 1.5),
+            Word("bueno", 1.5, 1.9),
         ]
-        silencios = [Silencio(inicio=0.7, fin=1.45)]
-        cortes = repetition_detector.detectar_muletillas(palabras, silencios)
-        self.assertEqual(len(cortes), 1)
-        self.assertAlmostEqual(cortes[0].inicio, 0.3)
+        silences = [Silence(start=0.7, end=1.45)]
+        cuts = repetition_detector.detect_filler_words(words, silences)
+        self.assertEqual(len(cuts), 1)
+        self.assertAlmostEqual(cuts[0].start, 0.3)
 
-    def test_o_sea_multipalabra_con_pausa(self):
-        palabras = self._palabras("o", "sea", "vamos")
-        silencios = [Silencio(inicio=-0.5, fin=0.05)]
-        cortes = repetition_detector.detectar_muletillas(palabras, silencios)
-        self.assertEqual(len(cortes), 1)
-        self.assertAlmostEqual(cortes[0].inicio, 0.0)
+    def test_multiword_o_sea_with_pause(self):
+        words = self._words("o", "sea", "vamos")
+        silences = [Silence(start=-0.5, end=0.05)]
+        cuts = repetition_detector.detect_filler_words(words, silences)
+        self.assertEqual(len(cuts), 1)
+        self.assertAlmostEqual(cuts[0].start, 0.0)
 
-    def test_repeticion_con_pausa_en_el_medio_se_corta(self):
-        # "yo creo... [pausa] yo creo que sí": traba real
-        palabras = self._palabras("yo", "creo", "yo", "creo", "que", "si")
-        silencios = [Silencio(inicio=0.45, fin=0.6)]
-        cortes = repetition_detector.detectar_repeticiones(palabras, silencios)
-        self.assertEqual(len(cortes), 1)
-        self.assertAlmostEqual(cortes[0].inicio, 0.0)
-        self.assertAlmostEqual(cortes[0].fin, 0.6 - config.GUARDA_ONSET_SEG)
+    def test_repetition_with_pause_in_between_is_cut(self):
+        # "yo creo... [pause] yo creo que si": a real stumble
+        words = self._words("yo", "creo", "yo", "creo", "que", "si")
+        silences = [Silence(start=0.45, end=0.6)]
+        cuts = repetition_detector.detect_repetitions(words, silences)
+        self.assertEqual(len(cuts), 1)
+        self.assertAlmostEqual(cuts[0].start, 0.0)
+        self.assertAlmostEqual(cuts[0].end, 0.6 - config.ONSET_GUARD_SEC)
 
-    def test_repeticion_por_enfasis_no_se_corta(self):
-        # "y pulas y pulas y pulas", "al hablar al hablar": de corrido, sin pausa
-        palabras = self._palabras("y", "pulas", "y", "pulas", "y", "pulas", "eso")
-        self.assertEqual(repetition_detector.detectar_repeticiones(palabras, []), [])
+    def test_repetition_for_emphasis_is_not_cut(self):
+        # repeated back-to-back for emphasis, no pause
+        words = self._words("y", "pulas", "y", "pulas", "y", "pulas", "eso")
+        self.assertEqual(repetition_detector.detect_repetitions(words, []), [])
 
-    def test_repeticion_con_muletilla_en_el_medio_se_corta(self):
-        palabras = self._palabras("yo", "creo", "eh", "yo", "creo", "que")
-        cortes = repetition_detector.detectar_repeticiones(palabras, [])
-        self.assertEqual(len(cortes), 1)
-        self.assertAlmostEqual(cortes[0].inicio, 0.0)
-        self.assertAlmostEqual(cortes[0].fin, 0.9 - config.GUARDA_ONSET_SEG)
+    def test_repetition_with_filler_word_in_between_is_cut(self):
+        words = self._words("yo", "creo", "eh", "yo", "creo", "que")
+        cuts = repetition_detector.detect_repetitions(words, [])
+        self.assertEqual(len(cuts), 1)
+        self.assertAlmostEqual(cuts[0].start, 0.0)
+        self.assertAlmostEqual(cuts[0].end, 0.9 - config.ONSET_GUARD_SEC)
 
 
 class TestSubtitleGenerator(unittest.TestCase):
 
-    def test_formatear_tiempo_ass(self):
-        self.assertEqual(subtitle_generator._formatear_tiempo_ass(0.0), "0:00:00.00")
-        self.assertEqual(subtitle_generator._formatear_tiempo_ass(65.5), "0:01:05.50")
-        self.assertEqual(subtitle_generator._formatear_tiempo_ass(3661.12), "1:01:01.12")
+    def test_format_ass_time(self):
+        self.assertEqual(subtitle_generator._format_ass_time(0.0), "0:00:00.00")
+        self.assertEqual(subtitle_generator._format_ass_time(65.5), "0:01:05.50")
+        self.assertEqual(subtitle_generator._format_ass_time(3661.12), "1:01:01.12")
 
-    def test_agrupar_en_captions(self):
-        palabras = [
-            Palabra(texto="Hola", inicio=0.1, fin=0.4),
-            Palabra(texto="mundo", inicio=0.5, fin=0.9),
-            Palabra(texto="este", inicio=2.0, fin=2.3),
-            Palabra(texto="es", inicio=2.4, fin=2.6),
-            Palabra(texto="un", inicio=2.7, fin=2.9),
-            Palabra(texto="test", inicio=3.0, fin=3.4),
+    def test_group_into_captions(self):
+        words = [
+            Word(text="Hello", start=0.1, end=0.4),
+            Word(text="world", start=0.5, end=0.9),
+            Word(text="this", start=2.0, end=2.3),
+            Word(text="is", start=2.4, end=2.6),
+            Word(text="a", start=2.7, end=2.9),
+            Word(text="test", start=3.0, end=3.4),
         ]
-        captions = subtitle_generator.agrupar_en_captions(palabras)
+        captions = subtitle_generator.group_into_captions(words)
         self.assertGreater(len(captions), 0)
-        # Cada caption debe tener texto y rango de tiempo
+        # Every caption must have text and a time range
         for cap in captions:
-            self.assertTrue(len(cap.texto) > 0)
-            self.assertGreater(cap.fin, cap.inicio)
+            self.assertTrue(len(cap.text) > 0)
+            self.assertGreater(cap.end, cap.start)
 
 
-class TestRutaFiltroWindowsCompat(unittest.TestCase):
+class TestFilterPathWindowsCompat(unittest.TestCase):
 
-    def test_escapar_ruta_posix(self):
-        p = Path("/tmp/subtitulos.ass")
-        escapada = video_processor._escapar_ruta_para_filtro(p)
-        self.assertTrue(escapada.startswith("'") and escapada.endswith("'"))
-        self.assertIn("/tmp/subtitulos.ass", escapada)
+    def test_escape_posix_path(self):
+        p = Path("/tmp/subtitles.ass")
+        escaped = video_processor._escape_path_for_filter(p)
+        self.assertTrue(escaped.startswith("'") and escaped.endswith("'"))
+        self.assertIn("/tmp/subtitles.ass", escaped)
 
-    def test_escapar_ruta_formato_windows(self):
-        # Simula una ruta con dos puntos y barras de Windows
+    def test_escape_windows_style_path(self):
+        # Simulates a path with colons and Windows-style backslashes
         class FakeWindowsPath:
             def __str__(self):
                 return "C:\\Users\\runneradmin\\AppData\\Local\\Temp\\video.ass"
-        
-        texto_escapado = video_processor._escapar_ruta_para_filtro(FakeWindowsPath())
-        # En FFmpeg el ':' debe estar escapado con '\:' para que el filtro ass= no falle
-        self.assertIn("C\\:", texto_escapado)
+
+        escaped_text = video_processor._escape_path_for_filter(FakeWindowsPath())
+        # In FFmpeg, ':' must be escaped as '\:' so the ass= filter doesn't fail
+        self.assertIn("C\\:", escaped_text)
 
 
-class TestFFmpegPipelineReal(unittest.TestCase):
+class TestRealFFmpegPipeline(unittest.TestCase):
 
-    def test_corte_y_subtitulado_sintetico(self):
-        """Genera un video sintético de 2 segundos, corta y quema un subtítulo .ass de prueba."""
+    def test_synthetic_cut_and_subtitle(self):
+        """Generates a synthetic 2-second video, cuts it, and burns a test .ass subtitle."""
         with tempfile.TemporaryDirectory() as tmpdir:
             tmppath = Path(tmpdir)
-            video_origen = tmppath / "origen.mp4"
-            video_destino = tmppath / "destino.mp4"
-            ass_path = tmppath / "prueba.ass"
+            source_video = tmppath / "source.mp4"
+            output_video = tmppath / "output.mp4"
+            ass_path = tmppath / "test.ass"
 
-            # 1. Crear video sintético con ffmpeg (2 segundos con audio)
-            cmd_gen = [
+            # 1. Create a synthetic video with ffmpeg (2 seconds with audio)
+            gen_cmd = [
                 "ffmpeg", "-y", "-hide_banner", "-loglevel", "error",
                 "-f", "lavfi", "-i", "testsrc=duration=2:size=320x240:rate=25",
                 "-f", "lavfi", "-i", "sine=frequency=1000:duration=2",
                 "-c:v", "libx264", "-c:a", "aac",
-                str(video_origen)
+                str(source_video)
             ]
-            res_gen = subprocess.run(cmd_gen, capture_output=True, text=True)
-            self.assertEqual(res_gen.returncode, 0, f"Error generando video sintético: {res_gen.stderr}")
+            gen_result = subprocess.run(gen_cmd, capture_output=True, text=True)
+            self.assertEqual(gen_result.returncode, 0, f"Error generating synthetic video: {gen_result.stderr}")
 
-            # 2. Generar archivo .ass básico
+            # 2. Generate a basic .ass file
             captions = [
-                Caption(texto="Prueba de subtítulo", inicio=0.2, fin=1.2)
+                Caption(text="Subtitle test", start=0.2, end=1.2)
             ]
-            subtitle_generator.generar_ass(captions, 320, 240, ass_path)
+            subtitle_generator.generate_ass(captions, 320, 240, ass_path)
             self.assertTrue(ass_path.exists())
 
-            # 3. Cortar tramo [0.0 - 1.5] y quemar subtítulo
-            tramos = [Tramo(inicio=0.0, fin=1.5)]
-            video_processor.cortar_y_subtitular(video_origen, tramos, ass_path, video_destino)
+            # 3. Cut segment [0.0 - 1.5] and burn the subtitle
+            segments = [Segment(start=0.0, end=1.5)]
+            video_processor.cut_and_add_subtitles(source_video, segments, ass_path, output_video)
 
-            self.assertTrue(video_destino.exists(), "El video de salida no fue creado")
-            self.assertGreater(video_destino.stat().st_size, 1000, "El video de salida está vacío o corrupto")
+            self.assertTrue(output_video.exists(), "The output video was not created")
+            self.assertGreater(output_video.stat().st_size, 1000, "The output video is empty or corrupted")
 
 
-class TestAudioUtilizable(unittest.TestCase):
+class TestUsableAudio(unittest.TestCase):
 
-    def _video_sintetico(self, tmppath, con_audio):
-        destino = tmppath / ("con_audio.mp4" if con_audio else "sin_audio.mp4")
+    def _synthetic_video(self, tmppath, with_audio):
+        destination = tmppath / ("with_audio.mp4" if with_audio else "without_audio.mp4")
         cmd = ["ffmpeg", "-y", "-hide_banner", "-loglevel", "error",
                "-f", "lavfi", "-i", "testsrc=duration=1:size=160x120:rate=25"]
-        if con_audio:
+        if with_audio:
             cmd += ["-f", "lavfi", "-i", "sine=frequency=440:duration=1", "-c:a", "aac"]
-        cmd += ["-c:v", "libx264", str(destino)]
+        cmd += ["-c:v", "libx264", str(destination)]
         res = subprocess.run(cmd, capture_output=True, text=True)
         self.assertEqual(res.returncode, 0, res.stderr)
-        return destino
+        return destination
 
-    def test_video_sin_pista_de_audio_falla_con_mensaje_claro(self):
-        # Caso real: un celular grabó video pero ninguna muestra de audio.
-        # Antes ffmpeg fallaba con "Output file does not contain any stream".
+    def test_video_without_audio_track_fails_with_clear_message(self):
+        # Real case: a phone recorded video but no audio samples at all.
+        # ffmpeg used to fail with "Output file does not contain any stream".
         with tempfile.TemporaryDirectory() as tmpdir:
-            video = self._video_sintetico(Path(tmpdir), con_audio=False)
+            video = self._synthetic_video(Path(tmpdir), with_audio=False)
             with self.assertRaises(RuntimeError) as ctx:
-                transcription.extraer_audio(video)
+                transcription.extract_audio(video)
             self.assertIn("audio", str(ctx.exception).lower())
             self.assertNotIn("does not contain any stream", str(ctx.exception))
 
-    def test_video_con_audio_pasa_la_verificacion(self):
+    def test_video_with_audio_passes_the_check(self):
         with tempfile.TemporaryDirectory() as tmpdir:
-            video = self._video_sintetico(Path(tmpdir), con_audio=True)
-            transcription.verificar_audio_utilizable(video)  # no debe lanzar
+            video = self._synthetic_video(Path(tmpdir), with_audio=True)
+            transcription.verify_audio_usable(video)  # must not raise
 
 
 class TestWhisperEngine(unittest.TestCase):
 
-    def test_faster_whisper_carga_modelo_cpu(self):
-        """Verifica que faster-whisper y el runtime ctranslate2 inicialicen correctamente."""
+    def test_faster_whisper_loads_model_on_cpu(self):
+        """Checks that faster-whisper and the ctranslate2 runtime initialize correctly."""
         from faster_whisper import WhisperModel
-        # Usamos modelo 'tiny' para test rápido y liviano (~39MB)
-        modelo = WhisperModel("tiny", device="cpu", compute_type="int8")
-        self.assertIsNotNone(modelo)
-        del modelo
+        # Using the 'tiny' model for a quick, lightweight test (~39MB)
+        model = WhisperModel("tiny", device="cpu", compute_type="int8")
+        self.assertIsNotNone(model)
+        del model
 
 
 if __name__ == "__main__":

@@ -2,18 +2,18 @@ venv/
 __pycache__/
 *.pyc
 
-# Carpetas temporales y de logs
+# Temp and log folders
 Temp/
 Logs/
 
-# Carpetas de trabajo (se incluye la estructura vacía, pero nunca los videos del usuario)
-Crudos/*
-!Crudos/.gitkeep
-!Crudos/fallidos/
-Crudos/fallidos/*
-!Crudos/fallidos/.gitkeep
+# Working folders (the empty structure is included, but never the user's videos)
+Raw/*
+!Raw/.gitkeep
+!Raw/failed/
+Raw/failed/*
+!Raw/failed/.gitkeep
 
-Listos/*
-!Listos/.gitkeep
+Ready/*
+!Ready/.gitkeep
 
 config/config-OK-Hola-2026-08-24.py

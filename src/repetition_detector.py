@@ -1,18 +1,18 @@
-"""Muletillas y repeticiones, detectadas de forma conservadora por reglas
--- sin depender de ningún servicio externo (punto 17 de la spec: nada de
-sistemas de IA innecesarios para esto). La arquitectura permite cambiar a
-un analista más inteligente más adelante (por ejemplo, algo como lo que
-hacía el sistema anterior con `claude -p`) sin tocar cut_manager.py: sólo
-haría falta otra función acá que devuelva la misma lista de Corte.
+"""Filler words and repetitions, detected conservatively via rules -- with
+no dependency on any external service (point 17 of the spec: no
+unnecessary AI systems for this). The architecture allows swapping in a
+smarter analyzer later on (for example, something like what the previous
+system did with `claude -p`) without touching cut_manager.py: it would
+only take another function here that returns the same list of Cut.
 
-Regla central, igual que en todo el resto del proyecto: ante la duda, no
-cortar. Una muletilla inequívoca ("eh", "emm") se corta siempre; una que
-también es palabra real ("este", "tipo") sólo si tiene una pausa real
-pegada, medida sobre el audio -- señal de duda, no de frase fluida. Una
-repetición sólo se corta si son 2 o más palabras exactas repetidas poco
-después Y hay señal de duda en el medio (una pausa real o una muletilla):
-repetir por énfasis ("al hablar, al hablar", "y pulas y pulas") es parte
-del discurso, no un arranque en falso.
+Central rule, same as everywhere else in the project: when in doubt, don't
+cut. An unambiguous filler word ("eh", "emm") is always cut; one that's
+also a real word ("este", "tipo") only if it has a real pause right next
+to it, measured on the audio -- a sign of hesitation, not of fluent
+speech. A repetition is only cut if it's 2 or more exact words repeated
+shortly after AND there's a sign of hesitation in between (a real pause or
+a filler word): repeating for emphasis ("al hablar, al hablar", "y pulas
+y pulas") is part of normal speech, not a false start.
 """
 
 import re
@@ -20,159 +20,161 @@ import unicodedata
 from typing import List, Sequence
 
 import config
-from cut_manager import Corte
-from silence_detector import Silencio
-from transcription import Palabra
+from cut_manager import Cut
+from silence_detector import Silence
+from transcription import Word
 
 
-def _normalizar(texto: str) -> str:
-    texto = texto.lower().strip()
-    texto = unicodedata.normalize("NFKD", texto)
-    texto = "".join(c for c in texto if not unicodedata.combining(c))
-    return re.sub(r"[^\w\s]", "", texto)
+def _normalize(text: str) -> str:
+    text = text.lower().strip()
+    text = unicodedata.normalize("NFKD", text)
+    text = "".join(c for c in text if not unicodedata.combining(c))
+    return re.sub(r"[^\w\s]", "", text)
 
 
-def _fin_seguro(palabras: List[Palabra], indice_ultima: int) -> float:
-    """Whisper marca el `fin` de una palabra justo donde arranca la
-    siguiente: cortar hasta ahí pisaba el primer fonema de la palabra que
-    sigue si su inicio venía apenas tarde. Se deja una guarda antes."""
-    fin = palabras[indice_ultima].fin
-    if indice_ultima + 1 < len(palabras):
-        fin = min(fin, palabras[indice_ultima + 1].inicio - config.GUARDA_ONSET_SEG)
-    return fin
+def _safe_end(words: List[Word], last_index: int) -> float:
+    """Whisper marks a word's `end` right where the next one starts:
+    cutting up to there would step on the first phoneme of the next word
+    if its start came in just a bit late. A guard is left before it."""
+    end = words[last_index].end
+    if last_index + 1 < len(words):
+        end = min(end, words[last_index + 1].start - config.ONSET_GUARD_SEC)
+    return end
 
 
-def _hay_pausa_pegada(inicio: float, fin: float, silencios: Sequence[Silencio]) -> bool:
-    tol = config.TOLERANCIA_MULETILLA_SILENCIO_SEG
-    return any(s.fin >= inicio - tol and s.inicio <= fin + tol for s in silencios)
+def _has_adjacent_pause(start: float, end: float, silences: Sequence[Silence]) -> bool:
+    tol = config.FILLER_SILENCE_TOLERANCE_SEC
+    return any(s.end >= start - tol and s.start <= end + tol for s in silences)
 
 
-def detectar_muletillas(
-    palabras: List[Palabra], silencios: Sequence[Silencio] = ()
-) -> List[Corte]:
-    """Busca la muletilla (de una o más palabras, p. ej. "o sea") más
-    larga que coincida en cada posición.
+def detect_filler_words(
+    words: List[Word], silences: Sequence[Silence] = ()
+) -> List[Cut]:
+    """Looks for the longest filler word (one or more words, e.g. "o sea")
+    matching at each position.
 
-    Las inequívocas se cortan SIEMPRE que aparecen. Las de
-    MULETILLAS_AMBIGUAS ("este", "tipo"...) son también palabras reales
-    ("en este video", "tipo de cosa"): cortarlas siempre metía un salto
-    en medio de una frase fluida. Sólo se cortan si el detector de
-    silencios encontró una pausa real pegada (antes o después).
+    Unambiguous ones are ALWAYS cut when they appear. The ones in
+    AMBIGUOUS_FILLER_WORDS ("este", "tipo"...) are also real words ("en
+    este video", "tipo de cosa"): cutting them unconditionally introduced
+    a jump in the middle of a fluent sentence. They're only cut if the
+    silence detector found a real pause right next to them (before or
+    after).
 
-    La pausa se mide contra los silencios detectados por volumen y NO
-    contra los huecos entre timestamps de Whisper: Whisper estira el fin
-    de cada palabra hasta la siguiente, así que entre sus palabras nunca
-    hay hueco aunque la pausa exista (medido con un video real: 393
-    palabras, 0 muletillas "aisladas" por timestamps). Si la muletilla
-    va seguida de una pausa, el silencio cae DENTRO del intervalo
-    estirado de la palabra, y por eso se busca solapamiento y no
-    adyacencia exacta."""
-    normalizadas = [_normalizar(p.texto) for p in palabras]
-    n = len(palabras)
-    max_palabras_muletilla = max(len(m.split()) for m in config.MULETILLAS)
-    cortes = []
+    The pause is measured against silences detected by volume, NOT against
+    the gaps between Whisper's timestamps: Whisper stretches the end of
+    each word up to the next one, so there's never a gap between its
+    words even when the pause is real (measured on a real video: 393
+    words, 0 filler words "isolated" by timestamps). If the filler word is
+    followed by a pause, the silence falls INSIDE the word's stretched
+    interval, which is why this looks for overlap rather than exact
+    adjacency."""
+    normalized = [_normalize(w.text) for w in words]
+    n = len(words)
+    max_filler_words = max(len(m.split()) for m in config.FILLER_WORDS)
+    cuts = []
     i = 0
 
     while i < n:
-        tam_match = None
-        for tam in range(max_palabras_muletilla, 0, -1):
-            if i + tam > n:
+        match_len = None
+        for length in range(max_filler_words, 0, -1):
+            if i + length > n:
                 continue
-            frase = " ".join(normalizadas[i:i + tam])
-            if frase in config.MULETILLAS:
-                tam_match = tam
+            phrase = " ".join(normalized[i:i + length])
+            if phrase in config.FILLER_WORDS:
+                match_len = length
                 break
 
-        if tam_match:
-            inicio = palabras[i].inicio
-            fin = _fin_seguro(palabras, i + tam_match - 1)
-            es_ambigua = frase in config.MULETILLAS_AMBIGUAS
-            if fin > inicio and (not es_ambigua or _hay_pausa_pegada(inicio, fin, silencios)):
-                cortes.append(Corte(inicio=inicio, fin=fin))
-            i += tam_match
+        if match_len:
+            start = words[i].start
+            end = _safe_end(words, i + match_len - 1)
+            is_ambiguous = phrase in config.AMBIGUOUS_FILLER_WORDS
+            if end > start and (not is_ambiguous or _has_adjacent_pause(start, end, silences)):
+                cuts.append(Cut(start=start, end=end))
+            i += match_len
         else:
             i += 1
 
-    return cortes
+    return cuts
 
 
-def _hay_duda_en_el_medio(
-    palabras: List[Palabra],
-    normalizadas: List[str],
-    fin_primera: int,
-    inicio_segunda: int,
-    silencios: Sequence[Silencio],
+def _has_doubt_in_between(
+    words: List[Word],
+    normalized: List[str],
+    end_of_first: int,
+    start_of_second: int,
+    silences: Sequence[Silence],
 ) -> bool:
-    """Entre la última palabra de la primera aparición y la primera de la
-    segunda tiene que haber una pausa real (medida en el audio) o una
-    muletilla. Sin eso, la repetición es énfasis, no traba."""
-    desde = palabras[fin_primera].inicio
-    hasta = palabras[inicio_segunda].inicio
-    if any(desde <= s.inicio < hasta for s in silencios):
+    """Between the last word of the first occurrence and the first word of
+    the second one there has to be a real pause (measured on the audio) or
+    a filler word. Without that, the repetition is emphasis, not a
+    stumble."""
+    since = words[end_of_first].start
+    until = words[start_of_second].start
+    if any(since <= s.start < until for s in silences):
         return True
     return any(
-        normalizadas[k] in config.MULETILLAS for k in range(fin_primera + 1, inicio_segunda)
+        normalized[k] in config.FILLER_WORDS for k in range(end_of_first + 1, start_of_second)
     )
 
 
-def detectar_repeticiones(
-    palabras: List[Palabra], silencios: Sequence[Silencio] = ()
-) -> List[Corte]:
-    """Detecta un arranque en falso: el hablante empieza una frase, se
-    traba, y la vuelve a empezar igual ("yo creo que... yo creo que esto
-    es genial"). Se corta la PRIMERA aparición y se conserva desde la
-    segunda.
+def detect_repetitions(
+    words: List[Word], silences: Sequence[Silence] = ()
+) -> List[Cut]:
+    """Detects a false start: the speaker begins a sentence, stumbles, and
+    starts it over the same way ("I think that... I think this is
+    great"). The FIRST occurrence is cut and it's kept from the second one
+    onward.
 
-    Sólo cuenta como traba si en el medio hay una pausa real (silencio
-    detectado por volumen) o una muletilla. Repetir de corrido por
-    énfasis -- "al hablar, al hablar, al hablar", "pulas y pulas y pulas"
-    -- es una forma de hablar, y cortarla metía un salto en medio de una
-    frase fluida (2026-09-26).
+    It only counts as a stumble if there's a real pause (silence detected
+    by volume) or a filler word in between. Repeating in a row for
+    emphasis -- "al hablar, al hablar, al hablar", "pulas y pulas y pulas"
+    -- is a way of speaking, and cutting it introduced a jump in the
+    middle of fluent speech (2026-09-26).
 
-    CLAVE: la segunda aparición tiene que venir CASI PEGADA a la primera
-    (a lo sumo REPETICION_MAX_PALABRAS_INTERMEDIAS palabras en el medio y
-    dentro de VENTANA_REPETICION_SEG). Sin esa condición, esto borraba
-    frases enteras de habla normal: con "yo quiero mostrarte lo que
-    hicimos este mes con el equipo y lo que viene", el "lo que" repetido
-    naturalmente hacía que se borrara todo lo del medio y quedara "yo
-    quiero mostrarte lo que viene". Repetir una expresión común más
-    adelante en la frase NO es trabarse."""
-    normalizadas = [_normalizar(p.texto) for p in palabras]
-    n = len(palabras)
-    cortes = []
+    KEY: the second occurrence has to come ALMOST RIGHT AFTER the first
+    one (at most REPETITION_MAX_WORDS_BETWEEN words in between and within
+    REPETITION_WINDOW_SEC). Without that condition, this used to delete
+    entire normal sentences: with "I want to show you what we did this
+    month with the team and what's coming", the naturally repeated "what"
+    made everything in between get deleted, leaving "I want to show you
+    what's coming". Repeating a common expression later in the sentence is
+    NOT stumbling."""
+    normalized = [_normalize(w.text) for w in words]
+    n = len(words)
+    cuts = []
     i = 0
 
     while i < n:
-        encontrado = None
+        found = None
 
-        for tam in range(config.NGRAMA_MAX, config.NGRAMA_MIN - 1, -1):
-            if i + tam > n:
+        for length in range(config.NGRAM_MAX, config.NGRAM_MIN - 1, -1):
+            if i + length > n:
                 continue
-            ngrama = normalizadas[i:i + tam]
-            if "" in ngrama:
+            ngram = normalized[i:i + length]
+            if "" in ngram:
                 continue
 
-            primer_j = i + tam
-            ultimo_j = primer_j + config.REPETICION_MAX_PALABRAS_INTERMEDIAS
-            for j in range(primer_j, min(ultimo_j, n - tam) + 1):
-                if palabras[j].inicio - palabras[i + tam - 1].fin > config.VENTANA_REPETICION_SEG:
+            first_j = i + length
+            last_j = first_j + config.REPETITION_MAX_WORDS_BETWEEN
+            for j in range(first_j, min(last_j, n - length) + 1):
+                if words[j].start - words[i + length - 1].end > config.REPETITION_WINDOW_SEC:
                     break
-                if normalizadas[j:j + tam] == ngrama:
-                    encontrado = (tam, j)
+                if normalized[j:j + length] == ngram:
+                    found = (length, j)
                     break
 
-            if encontrado:
+            if found:
                 break
 
-        if encontrado and _hay_duda_en_el_medio(
-            palabras, normalizadas, i + encontrado[0] - 1, encontrado[1], silencios
+        if found and _has_doubt_in_between(
+            words, normalized, i + found[0] - 1, found[1], silences
         ):
-            _, j = encontrado
-            fin = palabras[j].inicio - config.GUARDA_ONSET_SEG
-            if fin > palabras[i].inicio:
-                cortes.append(Corte(inicio=palabras[i].inicio, fin=fin))
+            _, j = found
+            end = words[j].start - config.ONSET_GUARD_SEC
+            if end > words[i].start:
+                cuts.append(Cut(start=words[i].start, end=end))
             i = j
         else:
             i += 1
 
-    return cortes
+    return cuts

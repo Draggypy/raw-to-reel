@@ -1,5 +1,5 @@
-"""Elige el próximo video a procesar de Crudos/ y confirma que esté estable
-(no a medio copiar, p. ej. desde USB) antes de entregarlo.
+"""Picks the next video to process from Raw/ and confirms it's stable
+(not mid-copy, e.g. from a USB drive) before handing it off.
 """
 
 import time
@@ -9,43 +9,42 @@ from typing import Optional
 import config
 
 
-def listar_videos_pendientes() -> list[Path]:
-    """Videos en Crudos/ (no en subcarpetas como fallidos/), del más
-    antiguo al más nuevo por fecha de modificación."""
-    config.CRUDOS.mkdir(parents=True, exist_ok=True)
+def list_pending_videos() -> list[Path]:
+    """Videos in Raw/ (not in subfolders like failed/), oldest to newest
+    by modification date."""
+    config.RAW.mkdir(parents=True, exist_ok=True)
     videos = [
-        p for p in config.CRUDOS.iterdir()
-        if p.is_file() and p.suffix.lower() in config.EXTENSIONES_VIDEO
+        p for p in config.RAW.iterdir()
+        if p.is_file() and p.suffix.lower() in config.VIDEO_EXTENSIONS
     ]
     videos.sort(key=lambda p: p.stat().st_mtime)
     return videos
 
 
-def esta_estable(video: Path) -> bool:
-    """Confirma que el tamaño del archivo no cambia entre chequeos sucesivos,
-    para no agarrar un archivo a medio copiar."""
+def is_stable(video: Path) -> bool:
+    """Confirms the file's size doesn't change between successive checks,
+    so as not to grab a file that's mid-copy."""
     try:
-        tamano_previo = video.stat().st_size
+        previous_size = video.stat().st_size
     except FileNotFoundError:
         return False
 
-    for _ in range(config.CHEQUEOS_ESTABILIDAD):
-        time.sleep(config.ESPERA_ESTABILIDAD_SEG)
+    for _ in range(config.STABILITY_CHECKS):
+        time.sleep(config.STABILITY_WAIT_SEC)
         try:
-            tamano_actual = video.stat().st_size
+            current_size = video.stat().st_size
         except FileNotFoundError:
             return False
-        if tamano_actual != tamano_previo:
+        if current_size != previous_size:
             return False
-        tamano_previo = tamano_actual
+        previous_size = current_size
 
     return True
 
 
-def siguiente_video() -> Optional[Path]:
-    """Próximo video listo para procesar, o None si no hay ninguno estable
-    todavía."""
-    for video in listar_videos_pendientes():
-        if esta_estable(video):
+def next_video() -> Optional[Path]:
+    """Next video ready to process, or None if none are stable yet."""
+    for video in list_pending_videos():
+        if is_stable(video):
             return video
     return None

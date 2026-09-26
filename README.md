@@ -1,13 +1,13 @@
-# Gianni Edit
+# RawToReel
 
 **Editor automático de video *talking-head*: de crudo a listo, sin tocar un editor.**
 
-Dejás un video de una persona hablando a cámara en una carpeta. Gianni Edit corta los silencios, las muletillas y los arranques en falso, agrega subtítulos palabra por palabra y te devuelve el video editado en otra carpeta. Todo corre en tu propia máquina: sin APIs externas, sin cuentas, sin subir tu video a ningún lado.
+Dejás un video de una persona hablando a cámara en una carpeta. RawToReel corta los silencios, las muletillas y los arranques en falso, agrega subtítulos palabra por palabra y te devuelve el video editado en otra carpeta. Todo corre en tu propia máquina: sin APIs externas, sin cuentas, sin subir tu video a ningún lado.
 
 Pensado para contenido vertical tipo **Reels, TikTok y Stories de Instagram**.
 
 ```
-   Crudos/                        Gianni Edit                        Listos/
+   Crudos/                         RawToReel                         Listos/
 ┌──────────────┐    ┌──────────────────────────────────────┐    ┌──────────────┐
 │ mi-video.mp4 │ ─► │ transcribe → detecta → corta →       │ ─► │ mi-video.mp4 │
 │ (sin editar) │    │ subtitula → renderiza → valida       │    │ (editado)    │
@@ -36,14 +36,14 @@ Pensado para contenido vertical tipo **Reels, TikTok y Stories de Instagram**.
 | **Espacio libre en disco** | Para el modelo de transcripción (se descarga solo la primera vez, alrededor de medio GB para `small`) y para los temporales del render, que pesan del orden del video que estés procesando. |
 | **Una CPU razonable** | Por defecto usa CPU (`int8`), no necesita GPU. |
 
-**Sistema operativo:** desarrollado y usado a diario en **Linux**. En macOS debería funcionar igual (el código usa `pathlib` y llama a `ffmpeg`), pero no está probado ahí. En Windows no está probado.
+**Sistema operativo:** compatible con **Linux**, **Windows** y **macOS**.
 
 ## Instalación
 
 ```bash
 # 1. Clonar el repo
-git clone https://github.com/Draggypy/gianni-edit.git
-cd gianni-edit
+git clone https://github.com/Draggypy/raw-to-reel.git
+cd raw-to-reel
 
 # 2. Entorno virtual + dependencias
 python3 -m venv venv
@@ -52,6 +52,7 @@ pip install -r requirements.txt
 
 # 3. ffmpeg (si no lo tenés)
 sudo apt install ffmpeg           # Debian/Ubuntu/Mint
+# winget install Gyan.FFmpeg      # Windows (PowerShell)
 # brew install ffmpeg             # macOS
 
 # 4. Crear la carpeta donde vas a dejar los videos

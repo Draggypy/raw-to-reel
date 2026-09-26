@@ -261,10 +261,13 @@ systemctl --user status raw-to-reel.service
 - **El original nunca se toca hasta el final.** Se procesa una copia temporal en `Temp/`. Solo cuando la copia terminada está en `Listos/` y su tamaño coincide con el temporal se borra el original de `Crudos/`.
 - **Si algo falla** (transcripción vacía, error de `ffmpeg`, validación que no pasa) el original se mueve a `Crudos/fallidos/` para no reintentarse en bucle. La causa queda en `Logs/editor_gianni.log`.
 - **Para reintentar** un video fallido: devolvelo a `Crudos/`.
+- Todo lo de `Crudos/`, `Listos/`, `Temp/` y `Logs/` está en el `.gitignore`: tus videos nunca llegan al repositorio.
 
-### ¿Por qué un video termina en `fallidos/`?
+## Solución de problemas
 
-Buscá la línea en el log — dice el motivo exacto:
+### El video terminó en `Crudos/fallidos/`
+
+Buscá la línea en el log — dice el motivo exacto, no hace falta adivinar:
 
 ```bash
 grep -B 15 "Movido a fallidos" Logs/editor_gianni.log | tail -30
@@ -274,11 +277,26 @@ Las causas más comunes, de la más frecuente a la menos:
 
 | Mensaje en el log | Qué pasó | Qué hacer |
 |---|---|---|
-| `La pista de audio del video está vacía` o `El video no tiene pista de audio` | **El celular grabó video pero no audio.** Pasa cuando otra app (una llamada, un grabador de voz) tenía tomado el micrófono al empezar a grabar, o con el micrófono silenciado. El archivo tiene la pista de audio creada pero con cero muestras. Verificalo reproduciendo el video: no se va a escuchar nada. | Volvé a grabar. No hay nada que el editor pueda hacer sin audio. |
-| `la transcripción no devolvió ninguna palabra` | El audio existe pero Whisper no reconoció habla: volumen muy bajo, mucho ruido de fondo, o el video es de otra cosa (música, ambiente). | Grabá más cerca del micrófono, o revisá `IDIOMA_WHISPER`. |
-| `ERROR de validación: duración esperada ...` | La duración del video cortado no coincide con la esperada más allá de la tolerancia. Raro; puede pasar con grabaciones de frame rate muy irregular. | Reportalo con el log; subir `TOLERANCIA_DURACION_POR_TRAMO_SEG` es el parche rápido. |
-| `ffmpeg falló ...` | Un formato o códec que tu `ffmpeg` no soporta. | Verificá con `ffprobe tu-video.mp4` y actualizá `ffmpeg`. |
-- Todo lo de `Crudos/`, `Listos/`, `Temp/` y `Logs/` está en el `.gitignore`: tus videos nunca llegan al repositorio.
+| `El video no tiene pista de audio` / `La pista de audio del video está vacía` | **El celular grabó video pero no audio.** El archivo tiene la pista de audio creada pero con cero muestras (0 bytes de sonido) — pasa cuando otra app (una llamada, un grabador de voz, un asistente) tenía tomado el micrófono al empezar a grabar, o con el micrófono silenciado/tapado. | Reproducí el video: si no se escucha nada, confirmado. Hay que volver a grabar — no hay audio que editar. |
+| `la transcripción no devolvió ninguna palabra` | El audio existe y suena, pero Whisper no reconoció habla en español: volumen muy bajo, mucho ruido de fondo/eco, el micrófono lejos, o el clip es de otra cosa (música, ambiente, silencio con ruido). | Grabá más cerca del micrófono y con menos ruido de fondo. Si hablás en otro idioma, ajustá `IDIOMA_WHISPER`. |
+| `ffmpeg falló extrayendo audio: ...` | El contenedor del video está roto o `ffmpeg` no reconoce el códec de audio/video. Puede ser un archivo a medio grabar (se cortó la luz, se llenó el almacenamiento) o un formato exótico. | Corré `ffprobe tu-video.mp4` y mirá qué dice de los streams. Si el archivo se ve incompleto, es un video corrupto, no un bug del editor. |
+| `ffmpeg falló cortando un tramo` / `ffmpeg falló concatenando` / `ffmpeg falló quemando subtítulos` | Un paso puntual de `ffmpeg` falló — el mensaje completo (en `Logs/editor_gianni.log`, no se recorta) trae el error real de `ffmpeg` abajo. | Copiá el mensaje completo del log; casi siempre dice el problema concreto (códec no soportado, sin espacio en disco, fuente de subtítulo no encontrada). |
+| `ERROR de validación: pesa sólo N bytes` | El archivo final salió vacío o truncado — típicamente por quedarse sin espacio en disco a mitad del render. | Verificá espacio libre en `Temp/` y `Listos/`. |
+| `ERROR de validación: no tiene stream de video/audio` | El archivo final perdió una pista en el proceso (raro; señal de un `ffmpeg` con un build incompleto). | Reinstalá `ffmpeg` verificando que tenga `libass` y códecs de audio/video completos (ver Requisitos). |
+| `ERROR de validación: duración esperada ...` | La duración del video final no coincide con la esperada más allá del margen de tolerancia. Puede pasar con video grabado a **frame rate variable** (común en algunos celulares) en tomas muy largas o con muchísimos cortes. | Si es ocasional, no hay nada que hacer: es más seguro rechazar el video que entregar uno con desincronización. Si te pasa siempre con el mismo celular, avisá — hay margen para ajustar `TOLERANCIA_DURACION_POR_TRAMO_SEG`. |
+| `ERROR de validación: errores decodificando` | El archivo final quedó corrupto de alguna forma (raro, sería un bug real). | Guardá el video de `Temp/` (se borra al reintentar) y reportalo con el log completo. |
+
+### El video SÍ llegó a `Listos/`, pero algo no se ve o no se escucha bien
+
+Esto no lo detecta la validación automática porque el archivo es técnicamente válido — hay que mirarlo:
+
+| Síntoma | Causa probable | Dónde ajustar |
+|---|---|---|
+| No aparecen subtítulos, o se ven con una tipografía fea/genérica | La fuente configurada en `FUENTE_SUBTITULOS` no está instalada en tu sistema; `ffmpeg`/`libass` cae en una fuente por defecto sin avisar (no es un error). | Instalá la fuente que quieras usar y poné su nombre exacto en `FUENTE_SUBTITULOS` (ver la nota sobre licencias en la tabla de Subtítulos). |
+| Los subtítulos están corridos en el tiempo respecto al audio | Señal de una desincronización audio/video real en el resultado. | Revisá `Logs/editor_gianni.log` de ese video buscando cuántos tramos tuvo — con muchísimos cortes el margen de error se acumula (ver `TOLERANCIA_DURACION_*` en Configuración). |
+| Sigue cortando en medio de una idea, sentís que "corta apenas dejo de hablar" | Ajuste fino de sensibilidad, no un bug. | Subí `PAUSA_MINIMA_DENTRO_DE_FRASE_MS` y/o `MARGEN_SILENCIO_MS` en `src/config.py`. |
+| Deja pausas larguísimas sin cortar | El umbral de silencio está muy exigente para tu nivel de ruido de fondo. | Bajá `MARGEN_DB_SOBRE_PISO` o subí `UMBRAL_DB_MAX` con cuidado (ver los comentarios en `config.py`, están ahí para no romper el balance). |
+| Corta "eh"/"tipo"/"este" que en realidad eran parte de una frase normal | Falso positivo de las muletillas. | Sacá esa palabra de `MULETILLAS` (o de `MULETILLAS_AMBIGUAS` si ya exige pausa) en `src/config.py`. |
 
 ---
 

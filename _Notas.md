@@ -23,6 +23,16 @@ La carpeta real se había movido a `Escritorio/System/Gianni Edit/` en algún mo
 - `CORTAR_REPETICIONES = False` — apagado 2026-09-26: repetimos para especificar/enfatizar, y cortarlo "alucinaba". El editor se especializa en silencios + muletillas. El código queda para reactivar con True.
 - `FUNDIDO_AUDIO_SEG = 0.012` — fade in/out de audio por tramo para que el corte no haga clic.
 
+## Incidente 2026-09-26: videos a fallidos/ "sin motivo"
+
+`VID_20260926_033221.mp4` (Xiaomi, HEVC 1080p, 29.8s) iba a `fallidos/`.
+Causa real: la pista de audio estaba **vacía** — 0 muestras, sin códec
+(codec_tag 0x0000), `stbl` de 8 bytes, `mdhd duration=0`. El celular grabó
+video y nada de audio. ffmpeg fallaba con "Output file does not contain any
+stream", que no explica nada. Ahora `transcription.verificar_audio_utilizable`
+lo detecta antes y el log dice claramente que el video no tiene audio.
+No es un bug del corte: sin audio no hay nada que editar.
+
 ## Pendiente
 
 Revisión humana de calidad (subtítulos, sensación del corte) — la validación mecánica pasa, pero nadie escuchó/miró el resultado con atención todavía.

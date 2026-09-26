@@ -261,6 +261,23 @@ systemctl --user status raw-to-reel.service
 - **El original nunca se toca hasta el final.** Se procesa una copia temporal en `Temp/`. Solo cuando la copia terminada está en `Listos/` y su tamaño coincide con el temporal se borra el original de `Crudos/`.
 - **Si algo falla** (transcripción vacía, error de `ffmpeg`, validación que no pasa) el original se mueve a `Crudos/fallidos/` para no reintentarse en bucle. La causa queda en `Logs/editor_gianni.log`.
 - **Para reintentar** un video fallido: devolvelo a `Crudos/`.
+
+### ¿Por qué un video termina en `fallidos/`?
+
+Buscá la línea en el log — dice el motivo exacto:
+
+```bash
+grep -B 15 "Movido a fallidos" Logs/editor_gianni.log | tail -30
+```
+
+Las causas más comunes, de la más frecuente a la menos:
+
+| Mensaje en el log | Qué pasó | Qué hacer |
+|---|---|---|
+| `La pista de audio del video está vacía` o `El video no tiene pista de audio` | **El celular grabó video pero no audio.** Pasa cuando otra app (una llamada, un grabador de voz) tenía tomado el micrófono al empezar a grabar, o con el micrófono silenciado. El archivo tiene la pista de audio creada pero con cero muestras. Verificalo reproduciendo el video: no se va a escuchar nada. | Volvé a grabar. No hay nada que el editor pueda hacer sin audio. |
+| `la transcripción no devolvió ninguna palabra` | El audio existe pero Whisper no reconoció habla: volumen muy bajo, mucho ruido de fondo, o el video es de otra cosa (música, ambiente). | Grabá más cerca del micrófono, o revisá `IDIOMA_WHISPER`. |
+| `ERROR de validación: duración esperada ...` | La duración del video cortado no coincide con la esperada más allá de la tolerancia. Raro; puede pasar con grabaciones de frame rate muy irregular. | Reportalo con el log; subir `TOLERANCIA_DURACION_POR_TRAMO_SEG` es el parche rápido. |
+| `ffmpeg falló ...` | Un formato o códec que tu `ffmpeg` no soporta. | Verificá con `ffprobe tu-video.mp4` y actualizá `ffmpeg`. |
 - Todo lo de `Crudos/`, `Listos/`, `Temp/` y `Logs/` está en el `.gitignore`: tus videos nunca llegan al repositorio.
 
 ---

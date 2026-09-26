@@ -24,6 +24,7 @@ from silence_detector import Silencio
 from transcription import Palabra
 import subtitle_generator
 from subtitle_generator import Caption
+import transcription
 import video_processor
 
 MARGEN = config.MARGEN_SILENCIO_MS / 1000
@@ -313,6 +314,35 @@ class TestFFmpegPipelineReal(unittest.TestCase):
 
             self.assertTrue(video_destino.exists(), "El video de salida no fue creado")
             self.assertGreater(video_destino.stat().st_size, 1000, "El video de salida está vacío o corrupto")
+
+
+class TestAudioUtilizable(unittest.TestCase):
+
+    def _video_sintetico(self, tmppath, con_audio):
+        destino = tmppath / ("con_audio.mp4" if con_audio else "sin_audio.mp4")
+        cmd = ["ffmpeg", "-y", "-hide_banner", "-loglevel", "error",
+               "-f", "lavfi", "-i", "testsrc=duration=1:size=160x120:rate=25"]
+        if con_audio:
+            cmd += ["-f", "lavfi", "-i", "sine=frequency=440:duration=1", "-c:a", "aac"]
+        cmd += ["-c:v", "libx264", str(destino)]
+        res = subprocess.run(cmd, capture_output=True, text=True)
+        self.assertEqual(res.returncode, 0, res.stderr)
+        return destino
+
+    def test_video_sin_pista_de_audio_falla_con_mensaje_claro(self):
+        # Caso real: un celular grabó video pero ninguna muestra de audio.
+        # Antes ffmpeg fallaba con "Output file does not contain any stream".
+        with tempfile.TemporaryDirectory() as tmpdir:
+            video = self._video_sintetico(Path(tmpdir), con_audio=False)
+            with self.assertRaises(RuntimeError) as ctx:
+                transcription.extraer_audio(video)
+            self.assertIn("audio", str(ctx.exception).lower())
+            self.assertNotIn("does not contain any stream", str(ctx.exception))
+
+    def test_video_con_audio_pasa_la_verificacion(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            video = self._video_sintetico(Path(tmpdir), con_audio=True)
+            transcription.verificar_audio_utilizable(video)  # no debe lanzar
 
 
 class TestWhisperEngine(unittest.TestCase):

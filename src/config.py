@@ -161,6 +161,13 @@ TRAMO_MINIMO_SEG = 0.5
 # repetition_detector.py, cambiado 2026-08-24 por feedback real). Las
 # repeticiones sí siguen exigiendo 2+ palabras exactas -- una sola palabra
 # repetida es demasiado común en el habla normal como para ser confiable.
+# Apagado 2026-09-26 por feedback directo: "hablamos por repeticiones
+# porque queremos especificar" ("mirá qué pasa esto, pero podría pasar lo
+# contrario, pero pasa esto"). Aun con la regla de exigir pausa o muletilla
+# en el medio, cortar repeticiones metía saltos en discurso fluido. El
+# editor se especializa en silencios y muletillas; el código queda para
+# poder volver a probarlo cambiando esto a True.
+CORTAR_REPETICIONES = False
 MULETILLAS = {"eh", "emm", "mmm", "este", "o sea", "tipo", "digamos"}
 # Estas también son palabras reales ("en ESTE video", "TIPO de cosa", "O SEA
 # que..."). Cortarlas siempre metía un salto en medio de una frase fluida

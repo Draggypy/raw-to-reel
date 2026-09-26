@@ -27,7 +27,7 @@ Pensado para contenido vertical tipo **Reels, TikTok y Stories de Instagram**.
 ## Qué hace
 
 1. **Transcribe** el audio con [faster-whisper](https://github.com/SYSTRAN/faster-whisper), localmente, con timestamp por palabra.
-2. **Detecta** silencios (por volumen real del audio), muletillas ("eh", "o sea", "tipo"…) y repeticiones (cuando te trabás y arrancás la frase de nuevo). Distingue las pausas entre frases del ritmo natural dentro de una frase, para no cortarte mientras seguís hablando.
+2. **Detecta** silencios (por volumen real del audio) y muletillas ("eh", "o sea", "tipo"…). Distingue las pausas entre frases del ritmo natural dentro de una frase, para no cortarte mientras seguís hablando. (El corte de repeticiones existe pero viene apagado: repetir para enfatizar es parte del discurso.)
 3. **Consolida los cortes** en la lista final de tramos a conservar, cuidando de no dejar "flashes" de escena de una fracción de segundo.
 4. **Genera los subtítulos** (formato `.ass`) ya ajustados a los tiempos del video cortado.
 5. **Corta y quema los subtítulos** con `ffmpeg`.
@@ -282,7 +282,8 @@ Todo lo ajustable está en un solo archivo: [`src/config.py`](src/config.py). Ca
 | `SUAVIZADO_SILENCIO_MS` / `HISTERESIS_DB` | `50` / `3` | Suavizan la curva de volumen y evitan que una voz floja que roza el umbral abra y cierre silencios varias veces por segundo. |
 | `MULETILLAS` | `eh, emm, mmm, este, o sea, tipo, digamos` | Lista de muletillas a cortar. Editala a tu forma de hablar. |
 | `MULETILLAS_AMBIGUAS` | `este, tipo, o sea` | Muletillas que también son palabras reales ("en este video"). Sólo se cortan si tienen una pausa real pegada. |
-| `VENTANA_REPETICION_SEG` | `1.5` | Cuán pegada tiene que estar una repetición para considerarse un arranque en falso. Además, tiene que haber una pausa real o una muletilla en el medio: repetir de corrido por énfasis ("al hablar, al hablar") no se corta. |
+| `CORTAR_REPETICIONES` | `False` | Cortar arranques en falso ("yo creo que... yo creo que"). Viene apagado: en la práctica repetimos para enfatizar y cortarlo metía saltos en discurso fluido. Ponelo en `True` para probarlo. |
+| `VENTANA_REPETICION_SEG` | `1.5` | (Sólo con `CORTAR_REPETICIONES = True`.) Cuán pegada tiene que estar una repetición para considerarse un arranque en falso; además tiene que haber una pausa real o una muletilla en el medio. |
 
 ### Transcripción
 

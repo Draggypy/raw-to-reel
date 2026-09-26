@@ -6,8 +6,9 @@ hacía el sistema anterior con `claude -p`) sin tocar cut_manager.py: sólo
 haría falta otra función acá que devuelva la misma lista de Corte.
 
 Regla central, igual que en todo el resto del proyecto: ante la duda, no
-cortar. Una muletilla sólo se corta si está aislada (pausa real antes o
-después -- señal de duda real, no parte de una frase fluida). Una
+cortar. Una muletilla inequívoca ("eh", "emm") se corta siempre; una que
+también es palabra real ("este", "tipo") sólo si tiene una pausa real
+pegada, medida sobre el audio -- señal de duda, no de frase fluida. Una
 repetición sólo se corta si son 2 o más palabras exactas repetidas poco
 después -- una sola palabra repetida es demasiado común en el habla
 normal como para ser señal confiable de un arranque en falso.
@@ -15,10 +16,11 @@ normal como para ser señal confiable de un arranque en falso.
 
 import re
 import unicodedata
-from typing import List
+from typing import List, Sequence
 
 import config
 from cut_manager import Corte
+from silence_detector import Silencio
 from transcription import Palabra
 
 
@@ -29,20 +31,41 @@ def _normalizar(texto: str) -> str:
     return re.sub(r"[^\w\s]", "", texto)
 
 
-def detectar_muletillas(palabras: List[Palabra]) -> List[Corte]:
-    """Busca la muletilla (de una o más palabras, p. ej. "o sea") más
-    larga que coincida en cada posición, y la corta SIEMPRE que aparezca
-    en la lista -- sin pedir una pausa aislada alrededor.
+def _fin_seguro(palabras: List[Palabra], indice_ultima: int) -> float:
+    """Whisper marca el `fin` de una palabra justo donde arranca la
+    siguiente: cortar hasta ahí pisaba el primer fonema de la palabra que
+    sigue si su inicio venía apenas tarde. Se deja una guarda antes."""
+    fin = palabras[indice_ultima].fin
+    if indice_ultima + 1 < len(palabras):
+        fin = min(fin, palabras[indice_ultima + 1].inicio - config.GUARDA_ONSET_SEG)
+    return fin
 
-    Antes exigía una pausa real (150ms) antes o después para considerarla
-    "aislada", pero Whisper casi nunca deja timestamps con esa separación
-    limpia aunque la muletilla exista de verdad -- en la práctica esa
-    condición casi nunca se cumplía y no cortaba nada (medido con un video
-    real: 393 palabras, 0 muletillas detectadas). Sacada por feedback
-    directo del usuario tras ver el resultado (2026-08-24): prioriza cero
-    huecos por encima de un posible falso positivo. Ojo: "este" y "tipo"
-    también son palabras reales (pronombre / "tipo de cosa"), así que
-    ocasionalmente se puede cortar un uso legítimo, no sólo la duda."""
+
+def _hay_pausa_pegada(inicio: float, fin: float, silencios: Sequence[Silencio]) -> bool:
+    tol = config.TOLERANCIA_MULETILLA_SILENCIO_SEG
+    return any(s.fin >= inicio - tol and s.inicio <= fin + tol for s in silencios)
+
+
+def detectar_muletillas(
+    palabras: List[Palabra], silencios: Sequence[Silencio] = ()
+) -> List[Corte]:
+    """Busca la muletilla (de una o más palabras, p. ej. "o sea") más
+    larga que coincida en cada posición.
+
+    Las inequívocas se cortan SIEMPRE que aparecen. Las de
+    MULETILLAS_AMBIGUAS ("este", "tipo"...) son también palabras reales
+    ("en este video", "tipo de cosa"): cortarlas siempre metía un salto
+    en medio de una frase fluida. Sólo se cortan si el detector de
+    silencios encontró una pausa real pegada (antes o después).
+
+    La pausa se mide contra los silencios detectados por volumen y NO
+    contra los huecos entre timestamps de Whisper: Whisper estira el fin
+    de cada palabra hasta la siguiente, así que entre sus palabras nunca
+    hay hueco aunque la pausa exista (medido con un video real: 393
+    palabras, 0 muletillas "aisladas" por timestamps). Si la muletilla
+    va seguida de una pausa, el silencio cae DENTRO del intervalo
+    estirado de la palabra, y por eso se busca solapamiento y no
+    adyacencia exacta."""
     normalizadas = [_normalizar(p.texto) for p in palabras]
     n = len(palabras)
     max_palabras_muletilla = max(len(m.split()) for m in config.MULETILLAS)
@@ -60,7 +83,11 @@ def detectar_muletillas(palabras: List[Palabra]) -> List[Corte]:
                 break
 
         if tam_match:
-            cortes.append(Corte(inicio=palabras[i].inicio, fin=palabras[i + tam_match - 1].fin))
+            inicio = palabras[i].inicio
+            fin = _fin_seguro(palabras, i + tam_match - 1)
+            es_ambigua = frase in config.MULETILLAS_AMBIGUAS
+            if fin > inicio and (not es_ambigua or _hay_pausa_pegada(inicio, fin, silencios)):
+                cortes.append(Corte(inicio=inicio, fin=fin))
             i += tam_match
         else:
             i += 1
@@ -111,7 +138,9 @@ def detectar_repeticiones(palabras: List[Palabra]) -> List[Corte]:
 
         if encontrado:
             _, j = encontrado
-            cortes.append(Corte(inicio=palabras[i].inicio, fin=palabras[j].inicio))
+            fin = palabras[j].inicio - config.GUARDA_ONSET_SEG
+            if fin > palabras[i].inicio:
+                cortes.append(Corte(inicio=palabras[i].inicio, fin=fin))
             i = j
         else:
             i += 1

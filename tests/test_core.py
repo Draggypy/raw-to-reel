@@ -13,13 +13,21 @@ from pathlib import Path
 RAIZ = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(RAIZ / "src"))
 
+import numpy as np
+
+import config
 import cut_manager
 from cut_manager import Corte, Tramo
+import repetition_detector
+import silence_detector
 from silence_detector import Silencio
 from transcription import Palabra
 import subtitle_generator
 from subtitle_generator import Caption
 import video_processor
+
+MARGEN = config.MARGEN_SILENCIO_MS / 1000
+CORTE_MINIMO = config.CORTE_MINIMO_MS / 1000
 
 
 class TestCutManager(unittest.TestCase):
@@ -30,10 +38,47 @@ class TestCutManager(unittest.TestCase):
             Silencio(inicio=5.0, fin=5.1), # Muy corto para margen
         ]
         cortes = cut_manager.cortes_desde_silencios(silencios)
-        self.assertGreater(len(cortes), 0)
+        self.assertEqual(len(cortes), 1)
         # El corte debe respetar el margen de seguridad
-        self.assertGreater(cortes[0].inicio, 1.0)
-        self.assertLess(cortes[0].fin, 3.0)
+        self.assertAlmostEqual(cortes[0].inicio, 1.0 + MARGEN)
+        self.assertAlmostEqual(cortes[0].fin, 3.0 - MARGEN)
+
+    def test_micro_corte_se_descarta(self):
+        # Pausa apenas por encima del silencio mínimo: tras los dos márgenes
+        # quedaría un corte de ~20ms -- un salto visual a cambio de nada.
+        justo_por_debajo = 2 * MARGEN + CORTE_MINIMO - 0.02
+        justo_por_encima = 2 * MARGEN + CORTE_MINIMO + 0.02
+        silencios = [
+            Silencio(inicio=1.0, fin=1.0 + justo_por_debajo),
+            Silencio(inicio=5.0, fin=5.0 + justo_por_encima),
+        ]
+        cortes = cut_manager.cortes_desde_silencios(silencios)
+        self.assertEqual(len(cortes), 1)
+        self.assertAlmostEqual(cortes[0].inicio, 5.0 + MARGEN)
+
+    def test_corte_no_pisa_inicio_de_palabra(self):
+        # Volumen dice silencio de 1.0 a 3.0, pero Whisper oyó una palabra
+        # que arranca en 2.0: es voz baja, el corte termina un margen antes.
+        silencios = [Silencio(inicio=1.0, fin=3.0)]
+        palabras = [Palabra("bajito", 2.0, 2.4)]
+        cortes = cut_manager.cortes_desde_silencios(silencios, palabras)
+        self.assertEqual(len(cortes), 1)
+        self.assertAlmostEqual(cortes[0].inicio, 1.0 + MARGEN)
+        self.assertAlmostEqual(cortes[0].fin, 2.0 - MARGEN)
+
+    def test_corte_con_palabra_al_inicio_se_descarta(self):
+        # Una palabra que arranca casi al principio del silencio no deja
+        # nada útil para cortar.
+        silencios = [Silencio(inicio=1.0, fin=3.0)]
+        palabras = [Palabra("si", 1.1, 1.3)]
+        self.assertEqual(cut_manager.cortes_desde_silencios(silencios, palabras), [])
+
+    def test_palabra_fuera_del_silencio_no_afecta(self):
+        silencios = [Silencio(inicio=1.0, fin=3.0)]
+        palabras = [Palabra("antes", 0.2, 0.9), Palabra("despues", 3.0, 3.5)]
+        cortes = cut_manager.cortes_desde_silencios(silencios, palabras)
+        self.assertEqual(len(cortes), 1)
+        self.assertAlmostEqual(cortes[0].fin, 3.0 - MARGEN)
 
     def test_remapear_intervalo(self):
         # Video de 10s cortado: conserva [0, 2] y [4, 7]
@@ -54,6 +99,95 @@ class TestCutManager(unittest.TestCase):
         # Una palabra en [2.5, 3.5] (zona eliminada)
         remapeado_vacio = cut_manager.remapear_intervalo(2.5, 3.5, tramos)
         self.assertIsNone(remapeado_vacio)
+
+
+def _db_sintetico(*tramos):
+    """Curva de dB en ventanas de VENTANA_SILENCIO_MS: (duracion_seg, nivel_db)."""
+    ventana = config.VENTANA_SILENCIO_MS / 1000
+    partes = [np.full(round(dur / ventana), nivel, dtype=float) for dur, nivel in tramos]
+    return np.concatenate(partes)
+
+
+class TestSilenceDetector(unittest.TestCase):
+
+    def test_pausa_clara_se_detecta(self):
+        db = _db_sintetico((2.0, -25.0), (1.0, -50.0), (2.0, -25.0))
+        silencios = silence_detector._silencios_desde_db(db)
+        self.assertEqual(len(silencios), 1)
+        self.assertAlmostEqual(silencios[0].inicio, 2.0, delta=0.06)
+        self.assertAlmostEqual(silencios[0].fin, 3.0, delta=0.06)
+
+    def test_voz_baja_no_es_silencio(self):
+        # Voz floja a -30dB (dentro del rango medido de voz) en un video con
+        # piso alto: antes el umbral podía subir hasta -28 y cortarla.
+        db = _db_sintetico((2.0, -22.0), (1.0, -30.0), (2.0, -22.0))
+        self.assertEqual(silence_detector._silencios_desde_db(db), [])
+
+    def test_oscilacion_alrededor_del_umbral_no_fragmenta(self):
+        # Voz que roza el umbral, alternando cada 10ms +-2dB alrededor de un
+        # umbral de ~-38dB: sin suavizado ni histéresis esto daba decenas de
+        # cortes de una ventana. Debe dar cero silencios.
+        piso = _db_sintetico((1.0, -55.0))
+        voz = _db_sintetico((2.0, -25.0))
+        oscilante = np.tile([-36.0, -40.0], 50)  # 1s alternando
+        db = np.concatenate([piso, voz, oscilante, voz])
+        silencios = silence_detector._silencios_desde_db(db)
+        # el único silencio es el piso inicial; la zona oscilante (3s-4s) no
+        self.assertEqual(len(silencios), 1)
+        self.assertLessEqual(silencios[0].fin, 1.06)
+
+    def test_histeresis_cierra_silencio_ante_voz(self):
+        # Silencio real seguido de una palabra apenas por encima del umbral:
+        # el silencio tiene que cerrarse ahí, no comerse la palabra.
+        db = _db_sintetico((1.0, -55.0), (1.0, -25.0), (1.0, -55.0), (0.5, -37.0), (1.0, -25.0))
+        silencios = silence_detector._silencios_desde_db(db)
+        self.assertEqual(len(silencios), 2)
+        self.assertAlmostEqual(silencios[1].fin, 3.0, delta=0.06)
+
+
+class TestMuletillas(unittest.TestCase):
+
+    def _palabras(self, *textos, paso=0.3):
+        # Whisper estira el fin de cada palabra hasta el inicio de la siguiente
+        return [Palabra(t, i * paso, (i + 1) * paso) for i, t in enumerate(textos)]
+
+    def test_muletilla_inequivoca_se_corta_siempre(self):
+        palabras = self._palabras("yo", "eh", "creo")
+        cortes = repetition_detector.detectar_muletillas(palabras)
+        self.assertEqual(len(cortes), 1)
+        self.assertAlmostEqual(cortes[0].inicio, 0.3)
+        # guarda antes del inicio de "creo"
+        self.assertAlmostEqual(cortes[0].fin, 0.6 - config.GUARDA_ONSET_SEG)
+
+    def test_este_en_frase_fluida_no_se_corta(self):
+        palabras = self._palabras("en", "este", "video", "vamos")
+        self.assertEqual(repetition_detector.detectar_muletillas(palabras, []), [])
+
+    def test_este_con_pausa_pegada_se_corta(self):
+        # "este" dubitativo: Whisper lo estira sobre la pausa que le sigue
+        palabras = [
+            Palabra("y", 0.0, 0.3),
+            Palabra("este", 0.3, 1.5),
+            Palabra("bueno", 1.5, 1.9),
+        ]
+        silencios = [Silencio(inicio=0.7, fin=1.45)]
+        cortes = repetition_detector.detectar_muletillas(palabras, silencios)
+        self.assertEqual(len(cortes), 1)
+        self.assertAlmostEqual(cortes[0].inicio, 0.3)
+
+    def test_o_sea_multipalabra_con_pausa(self):
+        palabras = self._palabras("o", "sea", "vamos")
+        silencios = [Silencio(inicio=-0.5, fin=0.05)]
+        cortes = repetition_detector.detectar_muletillas(palabras, silencios)
+        self.assertEqual(len(cortes), 1)
+        self.assertAlmostEqual(cortes[0].inicio, 0.0)
+
+    def test_repeticion_deja_guarda_ante_segunda_aparicion(self):
+        palabras = self._palabras("yo", "creo", "yo", "creo", "que", "si")
+        cortes = repetition_detector.detectar_repeticiones(palabras)
+        self.assertEqual(len(cortes), 1)
+        self.assertAlmostEqual(cortes[0].inicio, 0.0)
+        self.assertAlmostEqual(cortes[0].fin, 0.6 - config.GUARDA_ONSET_SEG)
 
 
 class TestSubtitleGenerator(unittest.TestCase):

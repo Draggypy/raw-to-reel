@@ -50,11 +50,44 @@ def _volumen_db_por_ventana(muestras: np.ndarray, frecuencia: int) -> np.ndarray
     return 20 * np.log10(rms / 32768.0)
 
 
+def _suavizar(db_por_ventana: np.ndarray) -> np.ndarray:
+    n = max(1, round(config.SUAVIZADO_SILENCIO_MS / config.VENTANA_SILENCIO_MS))
+    if n <= 1 or len(db_por_ventana) < n:
+        return db_por_ventana
+    # Promedio móvil con bordes rellenados (edge), para no arrastrar ceros
+    # (= 0dB, volumen máximo) hacia adentro en el arranque y el final.
+    relleno = n // 2
+    extendido = np.pad(db_por_ventana, (relleno, n - 1 - relleno), mode="edge")
+    return np.convolve(extendido, np.ones(n) / n, mode="valid")
+
+
+def _marcar_silencio_con_histeresis(db_por_ventana: np.ndarray, umbral: float) -> np.ndarray:
+    """Devuelve un booleano por ventana. Entrar en silencio exige caer
+    HISTERESIS_DB por debajo del umbral; salir alcanza con volver a
+    tocarlo. Así una voz floja que roza el umbral no abre un silencio, y
+    cualquier asomo de voz lo cierra."""
+    umbral_entrar = umbral - config.HISTERESIS_DB
+    es_silencio = np.zeros(len(db_por_ventana), dtype=bool)
+    en_silencio = False
+    for i, db in enumerate(db_por_ventana):
+        if en_silencio:
+            en_silencio = db < umbral
+        else:
+            en_silencio = db < umbral_entrar
+        es_silencio[i] = en_silencio
+    return es_silencio
+
+
 def detectar_silencios(audio_path: Path) -> List[Silencio]:
     muestras, frecuencia = _cargar_audio_mono16(audio_path)
     db_por_ventana = _volumen_db_por_ventana(muestras, frecuencia)
     if len(db_por_ventana) == 0:
         return []
+    return _silencios_desde_db(db_por_ventana)
+
+
+def _silencios_desde_db(db_por_ventana: np.ndarray) -> List[Silencio]:
+    db_por_ventana = _suavizar(db_por_ventana)
 
     piso_de_ruido_crudo = float(np.percentile(db_por_ventana, 10))
     # Si el percentil 10 ya cae dentro de rango de voz (poca pausa real en
@@ -69,7 +102,7 @@ def detectar_silencios(audio_path: Path) -> List[Silencio]:
     )
 
     tam_ventana_seg = config.VENTANA_SILENCIO_MS / 1000
-    es_silencio = db_por_ventana < umbral
+    es_silencio = _marcar_silencio_con_histeresis(db_por_ventana, umbral)
 
     tramos_crudos = []
     inicio_actual = None

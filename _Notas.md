@@ -13,8 +13,12 @@ La carpeta real se había movido a `Escritorio/System/Gianni Edit/` en algún mo
 ## Parámetros clave (`src/config.py`)
 
 - `DURACION_MINIMA_SILENCIO_MS = 300` — piso de cuánto silencio hace falta para cortar (subido de 250 el 2026-09-13).
-- `MARGEN_SILENCIO_MS = 50` — buffer en cada borde de un corte para no comerse una palabra.
-- `TRAMO_MINIMO_SEG = 0.3` — evita flashes de escena de una fracción de segundo.
+- `MARGEN_SILENCIO_MS = 150` — buffer en cada borde de un corte para no comerse una palabra (subido de 50 el 2026-09-20).
+- `CORTE_MINIMO_MS = 150` — un corte que ahorra menos que esto no se hace (agregado 2026-09-26: eliminaba micro-cortes de 20ms que se sentían como saltos "de la nada").
+- `TRAMO_MINIMO_SEG = 0.5` — evita flashes de escena de una fracción de segundo (subido de 0.3 el 2026-09-26).
+- `UMBRAL_DB_MAX = -35` — techo del umbral, fuera del rango de voz (bajado de -28 el 2026-09-26).
+- Detector con suavizado (50ms) + histéresis (3dB), y los cortes nunca pisan un inicio de palabra según Whisper.
+- `MULETILLAS_AMBIGUAS = {este, tipo, o sea}` — sólo se cortan con pausa real pegada.
 
 ## Pendiente
 

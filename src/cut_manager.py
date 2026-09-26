@@ -8,7 +8,7 @@ adentro.
 """
 
 from dataclasses import dataclass
-from typing import List, Optional, Tuple
+from typing import List, Optional, Sequence, Tuple
 
 import config
 from silence_detector import Silencio
@@ -31,27 +31,43 @@ class Tramo:
         return self.fin - self.inicio
 
 
-def cortes_desde_silencios(silencios: List[Silencio]) -> List[Corte]:
+def cortes_desde_silencios(
+    silencios: List[Silencio], palabras: Sequence[Palabra] = ()
+) -> List[Corte]:
     """El corte real es más angosto que el silencio detectado: deja
     MARGEN_SILENCIO_MS de buffer en cada borde para no comerse el final
     o el comienzo de una palabra.
 
-    Ese margen es la ÚNICA protección que necesitan estos cortes, y es
-    deliberado. Antes había además un paso que "protegía palabras" usando
-    los timestamps de Whisper, y resultó ser un desastre: Whisper estira
-    el `fin` de cada palabra hasta donde arranca la siguiente, así que se
-    traga la pausa del medio. Un silencio REAL de 1.6s medido por el audio
-    caía "dentro" de una palabra según Whisper y el corte se descartaba
-    entero. Medido en un video real: de 20 silencios detectados casi
-    ninguno se cortaba, y quedaban 9.4s de silencio en 35s de video.
-    El detector de silencios mide volumen real: si dice que ahí no hay
-    sonido, no hay ninguna palabra que proteger."""
+    Además:
+    - Si Whisper transcribió una palabra que ARRANCA dentro del silencio,
+      ahí hay voz baja que el volumen no registró: el corte se recorta
+      para terminar un margen antes de ese inicio. Sólo se miran inicios
+      de palabra, nunca finales: Whisper estira el `fin` de cada palabra
+      hasta donde arranca la siguiente, así que se traga la pausa del
+      medio. Una versión anterior protegía palabras completas (inicio y
+      fin) y descartaba casi todos los cortes reales -- medido en un video
+      real: de 20 silencios detectados casi ninguno se cortaba, y quedaban
+      9.4s de silencio en 35s de video.
+    - Un corte que ahorra menos de CORTE_MINIMO_MS se descarta: es un
+      salto visual (la cabeza se mueve, el audio hace "clic") a cambio de
+      nada. Con margen 150 y silencio mínimo 300, una pausa de 320ms
+      generaba un corte de 20ms -- esos micro-cortes se sentían como que
+      "de la nada corta" en medio de una frase."""
     margen = config.MARGEN_SILENCIO_MS / 1000
+    corte_minimo = config.CORTE_MINIMO_MS / 1000
+    inicios_palabra = sorted(p.inicio for p in palabras)
+
     cortes = []
     for s in silencios:
         inicio = s.inicio + margen
         fin = s.fin - margen
-        if fin > inicio:  # la Fase 5 ya lo garantiza, pero por las dudas
+        for inicio_palabra in inicios_palabra:
+            if inicio_palabra >= s.fin:
+                break
+            if inicio_palabra >= s.inicio:
+                fin = min(fin, inicio_palabra - margen)
+                break
+        if fin - inicio >= corte_minimo:
             cortes.append(Corte(inicio=inicio, fin=fin))
     return cortes
 

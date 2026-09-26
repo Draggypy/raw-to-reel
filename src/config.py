@@ -32,6 +32,17 @@ IDIOMA_WHISPER = "es"
 # Umbral ADAPTATIVO (piso de ruido propio del video + margen), no un número
 # fijo -- valores heredados y ya validados del sistema anterior.
 VENTANA_SILENCIO_MS = 10        # tamaño de ventana de análisis de volumen
+# La energía de la voz oscila mucho de una ventana de 10ms a la siguiente
+# (oclusivas, fricativas, finales de palabra). Sin suavizar, una voz que
+# habla cerca del umbral alterna silencio/voz varias veces por segundo y
+# eso se traducía en "corta, y de la nada corta otra vez" (2026-09-26). Se
+# promedia la curva de dB en una ventana de este tamaño antes de comparar.
+SUAVIZADO_SILENCIO_MS = 50
+# Histéresis: para ENTRAR en silencio la señal tiene que caer este margen
+# por debajo del umbral; para SALIR alcanza con volver a tocarlo. Sesgado
+# a favor de la voz: una sílaba floja que roza el umbral no abre un
+# silencio, pero cualquier asomo de voz lo cierra.
+HISTERESIS_DB = 3.0
 # Medido sobre audio real del usuario (2026-08-24): la voz vive entre -30 y
 # -17 dB y el silencio entre -55 y -45 dB. Con margen 10 el umbral daba
 # -44.8 dB, pegado al piso de ruido: todo lo que estaba entre -44 y -38 dB
@@ -41,7 +52,12 @@ VENTANA_SILENCIO_MS = 10        # tamaño de ventana de análisis de volumen
 # voz baja en vez de sumar pausas reales.
 MARGEN_DB_SOBRE_PISO = 17
 UMBRAL_DB_MIN = -40.0           # el umbral nunca es más estricto que esto...
-UMBRAL_DB_MAX = -28.0           # ...ni más permisivo que esto
+# Bajado de -28 a -35 (2026-09-26): la voz medida vive entre -30 y -17dB.
+# Con el techo en -28, en un video con piso de ruido alto el umbral llegaba
+# a -28dB y trataba la voz baja (finales de frase, consonantes suaves) como
+# silencio -- cortaba en medio del habla. -35 queda 5dB por debajo de la
+# voz más floja medida y 10dB por encima del techo de silencio (-45).
+UMBRAL_DB_MAX = -35.0           # ...ni más permisivo que esto
 # Techo del PISO DE RUIDO en sí (no del umbral final) -- agregado 2026-09-20,
 # feedback: "hay videos que no te dejan ni hablar, corta todo el tiempo".
 # Medido en logs reales: la densidad de cortes variaba de 0.15/seg (natural)
@@ -89,14 +105,38 @@ MARGEN_SILENCIO_MS = 150
 # del habla.
 DURACION_MINIMA_SILENCIO_MS = 300
 
+# Cuánto tiene que AHORRAR un corte, ya descontados los dos márgenes, para
+# valer el salto visual. Agregado 2026-09-26: con silencio mínimo 300 y
+# margen 150, una pausa de 320ms generaba un corte de 20ms -- la cabeza
+# salta, el audio hace "clic", y el video no se acorta nada. Esos
+# micro-cortes eran gran parte del "de la nada te corta" en medio de una
+# frase. Con 150, sólo se cortan pausas que dejan al menos 150ms afuera
+# (o sea, pausas de 2*MARGEN_SILENCIO_MS + 150 = 450ms o más).
+CORTE_MINIMO_MS = 150
+
+# Un corte nunca pisa el inicio de una palabra según Whisper: si Whisper
+# transcribió una palabra que arranca dentro de un silencio detectado por
+# volumen, eso es voz baja, no silencio. El corte se recorta para terminar
+# este margen antes del inicio de esa palabra (se usa el mismo margen que
+# en los bordes por volumen). Sólo se miran INICIOS de palabra: los
+# finales de Whisper se estiran hasta la palabra siguiente y no sirven
+# (ver cut_manager.cortes_desde_silencios).
+# Guarda extra antes del inicio de la palabra que sigue a una muletilla o
+# repetición cortada: Whisper marca el `fin` de una palabra justo donde
+# arranca la siguiente, así que cortar "hasta el fin" pisaba el primer
+# fonema de la palabra siguiente si el inicio venía apenas tarde.
+GUARDA_ONSET_SEG = 0.05
+
 # --- Consolidación de cortes ---
 # Un tramo conservado más corto que esto, atrapado entre dos cortes, se
 # fusiona con ellos en vez de quedar como un flash de escena de una
 # fracción de segundo (el "problema crítico" que ya pasó en el sistema
-# anterior). Con MARGEN_SILENCIO_MS=50 (2x50=100ms garantizados entre dos
-# silencios distintos) este valor SÍ puede activarse con cortes de
-# silencio solos, a diferencia de cuando el margen era 200ms.
-TRAMO_MINIMO_SEG = 0.3
+# anterior). Si el tramo tiene una palabra adentro no se borra: se
+# ensancha hasta este mínimo robándole silencio a los costados.
+# Subido de 0.3 a 0.5 (2026-09-26): dos cortes a 300ms uno del otro se
+# sienten como una ráfaga de saltos; medio segundo es lo mínimo para que
+# una escena entre dos cortes se lea como escena y no como parpadeo.
+TRAMO_MINIMO_SEG = 0.5
 
 # --- Muletillas y repeticiones (Fase 11) ---
 # Detección por reglas, sin depender de ningún servicio externo (punto 17
@@ -106,6 +146,17 @@ TRAMO_MINIMO_SEG = 0.3
 # repeticiones sí siguen exigiendo 2+ palabras exactas -- una sola palabra
 # repetida es demasiado común en el habla normal como para ser confiable.
 MULETILLAS = {"eh", "emm", "mmm", "este", "o sea", "tipo", "digamos"}
+# Estas también son palabras reales ("en ESTE video", "TIPO de cosa", "O SEA
+# que..."). Cortarlas siempre metía un salto en medio de una frase fluida
+# (2026-09-26). Sólo se cortan si el detector de silencios encontró una
+# pausa real pegada a ellas (antes o después) -- señal de duda, no de
+# frase. Las que no están acá ("eh", "emm", "mmm", "digamos") no tienen
+# uso legítimo en una frase y se cortan siempre.
+MULETILLAS_AMBIGUAS = {"este", "tipo", "o sea"}
+# Cuán cerca (en segundos) tiene que estar un silencio detectado de la
+# muletilla ambigua para considerarla "aislada". Se mide contra el audio
+# real, no contra los timestamps de Whisper (que nunca dejan huecos).
+TOLERANCIA_MULETILLA_SILENCIO_SEG = 0.2
 NGRAMA_MIN = 2             # mínimo de palabras exactas repetidas para contar como autocorrección
 NGRAMA_MAX = 6
 # La repetición tiene que venir casi pegada para ser un arranque en falso.

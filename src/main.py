@@ -6,7 +6,7 @@ hace de escaneo + procesamiento.
 
 Pipeline real (Fases 3-11, todas ya integradas acá): transcribir ->
 detectar silencios + muletillas/repeticiones -> consolidar cortes
-(protegiendo palabras) -> generar subtítulos remapeados -> cortar + quemar
+(sin pisar inicios de palabra) -> generar subtítulos remapeados -> cortar + quemar
 subtítulos con ffmpeg -> validar. Sólo si todo eso sale bien se llama a
 file_manager.finalizar(), que recién ahí mueve el resultado a Listos/ y
 borra el original de Crudos/.
@@ -60,7 +60,7 @@ def procesar_video(video: Path) -> bool:
             pass  # no crítico, es solo el WAV intermedio
 
         logger.actualizar_estado(video.name, "buscando muletillas y repeticiones")
-        cortes_muletillas = repetition_detector.detectar_muletillas(resultado.palabras)
+        cortes_muletillas = repetition_detector.detectar_muletillas(resultado.palabras, silencios)
         cortes_repeticiones = repetition_detector.detectar_repeticiones(resultado.palabras)
         logger.log(
             f"Muletillas: {len(cortes_muletillas)}, repeticiones: {len(cortes_repeticiones)}"
@@ -68,7 +68,7 @@ def procesar_video(video: Path) -> bool:
 
         logger.actualizar_estado(video.name, "consolidando cortes")
         cortes = (
-            cut_manager.cortes_desde_silencios(silencios)
+            cut_manager.cortes_desde_silencios(silencios, resultado.palabras)
             + cortes_muletillas
             + cortes_repeticiones
         )

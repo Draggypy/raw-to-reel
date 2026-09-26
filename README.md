@@ -183,7 +183,7 @@ Para comprobar que todo tu entorno (FFmpeg, Whisper y dependencias) quedó confi
 python -m unittest tests/test_core.py -v
 ```
 
-Si todo está en orden, verás las 8 pruebas pasando con `OK`.
+Si todo está en orden, verás todas las pruebas pasando con `OK`.
 
 > **Carpetas listas desde el primer momento:** El repositorio ya viene con las carpetas `Crudos/` (donde soltás tus videos) y `Listos/` (donde recibís el video final con subtítulos y sin silencios). No necesitás crear ninguna carpeta a mano; las carpetas temporales y de logs se gestionan solas.
 
@@ -271,11 +271,15 @@ Todo lo ajustable está en un solo archivo: [`src/config.py`](src/config.py). Ca
 
 | Constante | Valor por defecto | Qué controla |
 |---|---|---|
-| `DURACION_MINIMA_SILENCIO_MS` | `300` | Una pausa más corta que esto **no se corta**. Subilo si corta pausas naturales dentro de una frase. |
+| `DURACION_MINIMA_SILENCIO_MS` | `300` | Una pausa más corta que esto **no se detecta** como silencio. |
 | `MARGEN_SILENCIO_MS` | `150` | Cuánto silencio se deja en **cada borde** de un corte. Con 150, cada pausa cortada deja ~300 ms de silencio audible. Bajalo si querés cortes más secos; subilo si se siente que "corta apenas dejo de hablar". |
-| `TRAMO_MINIMO_SEG` | `0.3` | Evita tramos conservados de una fracción de segundo (se ven como un parpadeo). |
+| `CORTE_MINIMO_MS` | `150` | Cuánto tiene que **ahorrar** un corte (ya descontados los márgenes) para valer el salto visual. Evita los micro-cortes de 20 ms que se sentían como "corta de la nada". En la práctica, sólo se cortan pausas de `2 × MARGEN + CORTE_MINIMO` = 450 ms o más. |
+| `TRAMO_MINIMO_SEG` | `0.5` | Evita tramos conservados de una fracción de segundo (se ven como un parpadeo). |
 | `MARGEN_DB_SOBRE_PISO` | `17` | Sensibilidad del detector: el umbral de "silencio" es el piso de ruido del propio video + este margen. |
+| `UMBRAL_DB_MAX` | `-35` | El umbral nunca sube más que esto, para no entrar en rango de voz (la voz baja vive alrededor de -30 dB). |
+| `SUAVIZADO_SILENCIO_MS` / `HISTERESIS_DB` | `50` / `3` | Suavizan la curva de volumen y evitan que una voz floja que roza el umbral abra y cierre silencios varias veces por segundo. |
 | `MULETILLAS` | `eh, emm, mmm, este, o sea, tipo, digamos` | Lista de muletillas a cortar. Editala a tu forma de hablar. |
+| `MULETILLAS_AMBIGUAS` | `este, tipo, o sea` | Muletillas que también son palabras reales ("en este video"). Sólo se cortan si tienen una pausa real pegada. |
 | `VENTANA_REPETICION_SEG` | `1.5` | Cuán pegada tiene que estar una repetición para considerarse un arranque en falso. |
 
 ### Transcripción

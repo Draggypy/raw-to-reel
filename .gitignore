@@ -15,5 +15,6 @@ Crudos/fallidos/*
 
 Listos/*
 !Listos/.gitkeep
+!Listos/ejemplo_listo.mp4
 
 config/config-OK-Hola-2026-08-24.py

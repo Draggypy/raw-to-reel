@@ -6,6 +6,14 @@ Dejás un video de una persona hablando a cámara en una carpeta. RawToReel cort
 
 Pensado para contenido vertical tipo **Reels, TikTok y Stories de Instagram**.
 
+<p align="center">
+  <img src="assets/demo.gif" alt="Demostración de RawToReel" width="320">
+  <br>
+  <em>Video procesado de forma 100% automática con RawToReel (corte de pausas + subtítulos animados).</em>
+  <br>
+  <sub><a href="Listos/ejemplo_listo.mp4">🔊 Ver / Descargar video completo con audio (.mp4)</a></sub>
+</p>
+
 ```
    Crudos/                         RawToReel                         Listos/
 ┌──────────────┐    ┌──────────────────────────────────────┐    ┌──────────────┐

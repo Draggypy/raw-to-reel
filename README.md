@@ -74,30 +74,79 @@ mkdir -p Crudos
 
 ### 🪟 Windows (10 y 11)
 
-Abrí una terminal de **PowerShell** (o Windows Terminal):
+> [!TIP]
+> **¿Primera vez configurando herramientas de desarrollo en Windows?**  
+> A diferencia de Linux o macOS, Windows no trae **Git** ni **FFmpeg** preinstalados, y al instalar Python es muy común olvidar vincularlo al sistema. Seguí estos pasos sencillos en **PowerShell** (o la app **Terminal de Windows**).
+
+#### Paso 1: Instalar los programas necesarios (Git, FFmpeg y Python)
+
+Abrí una terminal de **PowerShell** como usuario normal e instalá las herramientas con `winget` (el gestor oficial de paquetes de Windows):
 
 ```powershell
-# 1. Instalar FFmpeg (usando el gestor oficial de paquetes de Windows)
+# 1. Instalar Git (fundamental para descargar y actualizar el proyecto)
+winget install Git.Git
+
+# 2. Instalar FFmpeg (para el corte y procesamiento de video y subtítulos)
 winget install Gyan.FFmpeg
 
-# IMPORTANTE: Cerrá y volvé a abrir PowerShell para que tome FFmpeg en el PATH del sistema.
-# Verificá con: ffmpeg -version
+# 3. Instalar Python 3.12 (si todavía no lo tenés instalado)
+winget install Python.Python.3.12
+```
 
-# 2. Clonar el repositorio y entrar a la carpeta
+> [!IMPORTANT]
+> **Si preferís instalar Python descargando el instalador oficial desde [python.org](https://www.python.org/downloads/):**  
+> En la primera pantalla del instalador, es **OBLIGATORIO** marcar la casilla inferior:  
+> ☑ **"Add python.exe to PATH"** (Agregar Python al PATH).  
+> Si omitís esta opción, la consola no reconocerá los comandos `python` ni `pip`.
+
+#### Paso 2: Reiniciar la terminal
+
+> [!WARNING]
+> **Cerrá la ventana actual de PowerShell y volvé a abrirla.**  
+> Este paso es indispensable para que Windows cargue las nuevas variables de entorno (`PATH`). Para verificar que todo quedó disponible, ejecutá:
+> ```powershell
+> git --version
+> python --version
+> ffmpeg -version
+> ```
+> Si los tres responden con su número de versión, ya tenés la base lista.
+
+#### Paso 3: Clonar el proyecto y crear el entorno virtual
+
+```powershell
+# 1. Clonar el repositorio y entrar a la carpeta
 git clone https://github.com/Draggypy/raw-to-reel.git
 cd raw-to-reel
 
-# 3. Crear y activar el entorno virtual
+# 2. Crear el entorno virtual aislado para las dependencias
 python -m venv venv
-.\venv\Scripts\Activate.ps1
-# Nota: Si PowerShell restringe la ejecución de scripts, permitila con:
-# Set-ExecutionPolicy -Scope CurrentUser RemoteSigned
 
-# 4. Instalar las dependencias
+# 3. Activar el entorno virtual
+.\venv\Scripts\Activate.ps1
+```
+
+> [!NOTE]
+> **¿Aparece un error en rojo que dice *"la ejecución de scripts está deshabilitada en este sistema"*?**  
+> PowerShell bloquea la ejecución de scripts por defecto. Habilitala para tu usuario ejecutando:
+> ```powershell
+> Set-ExecutionPolicy -Scope CurrentUser RemoteSigned
+> ```
+> Presioná `S` (Sí) y volvé a ejecutar: `.\venv\Scripts\Activate.ps1`.  
+> Sabrás que está activo porque aparecerá `(venv)` al inicio de tu línea de comandos.  
+> *(Si usás el Símbolo del sistema tradicional `cmd.exe`, podés activarlo con: `venv\Scripts\activate.bat`)*.
+
+#### Paso 4: Instalar las dependencias de Python
+
+Con el entorno `(venv)` activo en tu terminal:
+
+```powershell
+# 1. Actualizar pip
 python -m pip install --upgrade pip
+
+# 2. Instalar todas las librerías necesarias (faster-whisper, torch, etc.)
 pip install -r requirements.txt
 
-# 5. Crear la carpeta para tus videos crudos
+# 3. Crear la carpeta para tus videos crudos
 mkdir Crudos
 ```
 
@@ -163,7 +212,7 @@ El programa queda corriendo y vigilando `Crudos/`. Procesa **un video a la vez**
 En otra terminal, sin necesidad de activar el `venv`:
 
 ```bash
-python3 ver_estado.py
+python3 ver_estado.py        # en Windows: python ver_estado.py
 ```
 
 Muestra en vivo la etapa de cada video:
@@ -314,8 +363,11 @@ Antes de entregar, `validator.py` corre estos chequeos de menor a mayor costo y 
 
 | Síntoma | Qué mirar |
 |---|---|
+| `'git' no se reconoce como un comando interno o externo` (Windows) | Git no está instalado o no se reinició la terminal. Instalalo con `winget install Git.Git` (o desde [git-scm.com](https://git-scm.com)) y abrí una nueva ventana de PowerShell. |
+| `'python' no se reconoce como un comando interno o externo` (Windows) | No se marcó la casilla **"Add python.exe to PATH"** al instalar Python. Volvé a abrir el instalador descargado de Python, elegí **Modify** y tildá la opción para agregarlo al PATH. |
+| Error `ExecutionPolicy` / `la ejecución de scripts está deshabilitada` (Windows) | En PowerShell ejecutá: `Set-ExecutionPolicy -Scope CurrentUser RemoteSigned` (confirmá con `S`) y volvé a activar con `.\venv\Scripts\Activate.ps1`. |
+| `ffmpeg` / `ffprobe` "not found" o no se reconoce | No están en el `PATH` del sistema. En Windows: `winget install Gyan.FFmpeg` y reiniciá PowerShell. En Linux: `sudo apt install ffmpeg`. En Mac: `brew install ffmpeg`. |
 | Dejo un video y no pasa nada | ¿Existe la carpeta `Crudos/`? (hay que crearla a mano). ¿La extensión es `.mp4`, `.mov`, `.mkv` o `.avi`? ¿Está corriendo `python src/main.py`? |
-| `ffmpeg` / `ffprobe` "not found" | No están en el `PATH`. Instalalos y volvé a abrir la terminal. |
 | El video terminó en `Crudos/fallidos/` | Abrí `Logs/editor_gianni.log`: la línea con `ERROR` dice por qué. |
 | "la transcripción no devolvió ninguna palabra" | El audio está vacío o no se entiende. Revisá que el video tenga voz. |
 | Los subtítulos salen con una letra que no es la que quería | Cambiá `FUENTE_SUBTITULOS` por una fuente instalada. |

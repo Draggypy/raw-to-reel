@@ -62,9 +62,6 @@ source venv/bin/activate
 # 4. Instalar las dependencias de Python
 pip install --upgrade pip
 pip install -r requirements.txt
-
-# 5. Crear la carpeta para los videos crudos
-mkdir -p Crudos
 ```
 
 > **Arch Linux:** `sudo pacman -S python git ffmpeg`  
@@ -145,9 +142,6 @@ python -m pip install --upgrade pip
 
 # 2. Instalar todas las librerías necesarias (faster-whisper, torch, etc.)
 pip install -r requirements.txt
-
-# 3. Crear la carpeta para tus videos crudos
-mkdir Crudos
 ```
 
 ---
@@ -171,9 +165,6 @@ source venv/bin/activate
 # 4. Instalar las dependencias de Python
 pip install --upgrade pip
 pip install -r requirements.txt
-
-# 5. Crear la carpeta para los videos crudos
-mkdir -p Crudos
 ```
 
 ---
@@ -188,7 +179,7 @@ python -m unittest tests/test_core.py -v
 
 Si todo está en orden, verás las 8 pruebas pasando con `OK`.
 
-> **No hace falta configurar rutas.** Las carpetas de trabajo se calculan automáticamente a partir de donde está el proyecto (`Crudos/`, `Listos/`, `Temp/`, `Logs/`). Solo `Crudos/` tenés que crearla vos; el resto se crea solo al primer uso.
+> **Carpetas listas desde el primer momento:** El repositorio ya viene con las carpetas `Crudos/` (donde soltás tus videos) y `Listos/` (donde recibís el video final con subtítulos y sin silencios). No necesitás crear ninguna carpeta a mano; las carpetas temporales y de logs se gestionan solas.
 
 ## Cómo se usa
 
@@ -367,7 +358,7 @@ Antes de entregar, `validator.py` corre estos chequeos de menor a mayor costo y 
 | `'python' no se reconoce como un comando interno o externo` (Windows) | No se marcó la casilla **"Add python.exe to PATH"** al instalar Python. Volvé a abrir el instalador descargado de Python, elegí **Modify** y tildá la opción para agregarlo al PATH. |
 | Error `ExecutionPolicy` / `la ejecución de scripts está deshabilitada` (Windows) | En PowerShell ejecutá: `Set-ExecutionPolicy -Scope CurrentUser RemoteSigned` (confirmá con `S`) y volvé a activar con `.\venv\Scripts\Activate.ps1`. |
 | `ffmpeg` / `ffprobe` "not found" o no se reconoce | No están en el `PATH` del sistema. En Windows: `winget install Gyan.FFmpeg` y reiniciá PowerShell. En Linux: `sudo apt install ffmpeg`. En Mac: `brew install ffmpeg`. |
-| Dejo un video y no pasa nada | ¿Existe la carpeta `Crudos/`? (hay que crearla a mano). ¿La extensión es `.mp4`, `.mov`, `.mkv` o `.avi`? ¿Está corriendo `python src/main.py`? |
+| Dejo un video y no pasa nada | ¿El video está dentro de la carpeta `Crudos/`? ¿La extensión es `.mp4`, `.mov`, `.mkv` o `.avi`? ¿Está corriendo `python src/main.py`? |
 | El video terminó en `Crudos/fallidos/` | Abrí `Logs/editor_gianni.log`: la línea con `ERROR` dice por qué. |
 | "la transcripción no devolvió ninguna palabra" | El audio está vacío o no se entiende. Revisá que el video tenga voz. |
 | Los subtítulos salen con una letra que no es la que quería | Cambiá `FUENTE_SUBTITULOS` por una fuente instalada. |

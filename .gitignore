@@ -2,10 +2,18 @@ venv/
 __pycache__/
 *.pyc
 
-# Carpetas de trabajo -- videos reales de gente, no van al repo
-Crudos/
-Listos/
+# Carpetas temporales y de logs
 Temp/
 Logs/
+
+# Carpetas de trabajo (se incluye la estructura vacía, pero nunca los videos del usuario)
+Crudos/*
+!Crudos/.gitkeep
+!Crudos/fallidos/
+Crudos/fallidos/*
+!Crudos/fallidos/.gitkeep
+
+Listos/*
+!Listos/.gitkeep
 
 config/config-OK-Hola-2026-08-24.py

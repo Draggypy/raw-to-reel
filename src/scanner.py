@@ -12,8 +12,7 @@ import config
 def listar_videos_pendientes() -> list[Path]:
     """Videos en Crudos/ (no en subcarpetas como fallidos/), del más
     antiguo al más nuevo por fecha de modificación."""
-    if not config.CRUDOS.is_dir():
-        return []
+    config.CRUDOS.mkdir(parents=True, exist_ok=True)
     videos = [
         p for p in config.CRUDOS.iterdir()
         if p.is_file() and p.suffix.lower() in config.EXTENSIONES_VIDEO

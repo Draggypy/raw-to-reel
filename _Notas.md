@@ -19,6 +19,9 @@ La carpeta real se había movido a `Escritorio/System/Gianni Edit/` en algún mo
 - `UMBRAL_DB_MAX = -35` — techo del umbral, fuera del rango de voz (bajado de -28 el 2026-09-26).
 - Detector con suavizado (50ms) + histéresis (3dB), y los cortes nunca pisan un inicio de palabra según Whisper.
 - `MULETILLAS_AMBIGUAS = {este, tipo, o sea}` — sólo se cortan con pausa real pegada.
+- `PAUSA_MINIMA_DENTRO_DE_FRASE_MS = 1000` / `MARGEN_DENTRO_DE_FRASE_MS = 250` — una pausa en medio de una frase (según puntuación de Whisper) sólo se corta si dura 1s+, y deja 500ms de aire (2026-09-26, feedback: "hablando 10 segundos del mismo tema y de la nada corta").
+- Repeticiones: sólo se cortan si hay silencio real o muletilla entre las dos apariciones — repetir por énfasis no es traba (2026-09-26).
+- `FUNDIDO_AUDIO_SEG = 0.012` — fade in/out de audio por tramo para que el corte no haga clic.
 
 ## Pendiente
 

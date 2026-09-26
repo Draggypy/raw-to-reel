@@ -61,7 +61,7 @@ def procesar_video(video: Path) -> bool:
 
         logger.actualizar_estado(video.name, "buscando muletillas y repeticiones")
         cortes_muletillas = repetition_detector.detectar_muletillas(resultado.palabras, silencios)
-        cortes_repeticiones = repetition_detector.detectar_repeticiones(resultado.palabras)
+        cortes_repeticiones = repetition_detector.detectar_repeticiones(resultado.palabras, silencios)
         logger.log(
             f"Muletillas: {len(cortes_muletillas)}, repeticiones: {len(cortes_repeticiones)}"
         )

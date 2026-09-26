@@ -27,6 +27,8 @@ from subtitle_generator import Caption
 import video_processor
 
 MARGEN = config.MARGEN_SILENCIO_MS / 1000
+MARGEN_FRASE = config.MARGEN_DENTRO_DE_FRASE_MS / 1000
+PAUSA_FRASE = config.PAUSA_MINIMA_DENTRO_DE_FRASE_MS / 1000
 CORTE_MINIMO = config.CORTE_MINIMO_MS / 1000
 
 
@@ -75,10 +77,40 @@ class TestCutManager(unittest.TestCase):
 
     def test_palabra_fuera_del_silencio_no_afecta(self):
         silencios = [Silencio(inicio=1.0, fin=3.0)]
-        palabras = [Palabra("antes", 0.2, 0.9), Palabra("despues", 3.0, 3.5)]
+        palabras = [Palabra("antes.", 0.2, 0.9), Palabra("Despues", 3.0, 3.5)]
         cortes = cut_manager.cortes_desde_silencios(silencios, palabras)
         self.assertEqual(len(cortes), 1)
         self.assertAlmostEqual(cortes[0].fin, 3.0 - MARGEN)
+
+    def test_pausa_corta_dentro_de_frase_no_se_corta(self):
+        # "estamos hablando [0.8s] de un tema": respiración en medio de la
+        # frase, ritmo del habla -- no se toca aunque supere el mínimo general.
+        palabras = [Palabra("estamos", 0.0, 0.5), Palabra("hablando", 0.5, 1.0), Palabra("de", 1.8, 2.0)]
+        silencios = [Silencio(inicio=1.0, fin=1.0 + PAUSA_FRASE - 0.2)]
+        self.assertEqual(cut_manager.cortes_desde_silencios(silencios, palabras), [])
+
+    def test_pausa_larga_dentro_de_frase_se_corta_dejando_mas_aire(self):
+        palabras = [Palabra("estamos", 0.0, 0.5), Palabra("hablando", 0.5, 1.0), Palabra("de", 2.6, 2.8)]
+        silencios = [Silencio(inicio=1.0, fin=2.6)]
+        cortes = cut_manager.cortes_desde_silencios(silencios, palabras)
+        self.assertEqual(len(cortes), 1)
+        self.assertAlmostEqual(cortes[0].inicio, 1.0 + MARGEN_FRASE)
+        self.assertAlmostEqual(cortes[0].fin, 2.6 - MARGEN_FRASE)
+
+    def test_pausa_entre_frases_se_corta_con_margen_normal(self):
+        palabras = [Palabra("tema.", 0.5, 1.0), Palabra("Ahora", 1.6, 1.9)]
+        silencios = [Silencio(inicio=1.0, fin=1.6)]
+        cortes = cut_manager.cortes_desde_silencios(silencios, palabras)
+        self.assertEqual(len(cortes), 1)
+        self.assertAlmostEqual(cortes[0].inicio, 1.0 + MARGEN)
+        self.assertAlmostEqual(cortes[0].fin, 1.6 - MARGEN)
+
+    def test_coma_y_puntos_suspensivos(self):
+        silencios = [Silencio(inicio=1.0, fin=1.8)]
+        con_coma = [Palabra("tema,", 0.5, 1.0)]
+        self.assertEqual(cut_manager.cortes_desde_silencios(silencios, con_coma), [])
+        con_suspensivos = [Palabra("tema...", 0.5, 1.0)]
+        self.assertEqual(len(cut_manager.cortes_desde_silencios(silencios, con_suspensivos)), 1)
 
     def test_remapear_intervalo(self):
         # Video de 10s cortado: conserva [0, 2] y [4, 7]
@@ -182,12 +214,26 @@ class TestMuletillas(unittest.TestCase):
         self.assertEqual(len(cortes), 1)
         self.assertAlmostEqual(cortes[0].inicio, 0.0)
 
-    def test_repeticion_deja_guarda_ante_segunda_aparicion(self):
+    def test_repeticion_con_pausa_en_el_medio_se_corta(self):
+        # "yo creo... [pausa] yo creo que sí": traba real
         palabras = self._palabras("yo", "creo", "yo", "creo", "que", "si")
-        cortes = repetition_detector.detectar_repeticiones(palabras)
+        silencios = [Silencio(inicio=0.45, fin=0.6)]
+        cortes = repetition_detector.detectar_repeticiones(palabras, silencios)
         self.assertEqual(len(cortes), 1)
         self.assertAlmostEqual(cortes[0].inicio, 0.0)
         self.assertAlmostEqual(cortes[0].fin, 0.6 - config.GUARDA_ONSET_SEG)
+
+    def test_repeticion_por_enfasis_no_se_corta(self):
+        # "y pulas y pulas y pulas", "al hablar al hablar": de corrido, sin pausa
+        palabras = self._palabras("y", "pulas", "y", "pulas", "y", "pulas", "eso")
+        self.assertEqual(repetition_detector.detectar_repeticiones(palabras, []), [])
+
+    def test_repeticion_con_muletilla_en_el_medio_se_corta(self):
+        palabras = self._palabras("yo", "creo", "eh", "yo", "creo", "que")
+        cortes = repetition_detector.detectar_repeticiones(palabras, [])
+        self.assertEqual(len(cortes), 1)
+        self.assertAlmostEqual(cortes[0].inicio, 0.0)
+        self.assertAlmostEqual(cortes[0].fin, 0.9 - config.GUARDA_ONSET_SEG)
 
 
 class TestSubtitleGenerator(unittest.TestCase):

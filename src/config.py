@@ -114,6 +114,22 @@ DURACION_MINIMA_SILENCIO_MS = 300
 # (o sea, pausas de 2*MARGEN_SILENCIO_MS + 150 = 450ms o más).
 CORTE_MINIMO_MS = 150
 
+# --- Pausas DENTRO de una frase vs. ENTRE frases (2026-09-26) ---
+# Una pausa dentro de una frase (respirar, buscar la palabra, la pausa
+# dramática antes de lo importante) es ritmo del habla, no aire muerto.
+# Cortarla con la misma regla que una pausa entre frases era el "estoy
+# hablando 10 segundos del mismo tema y de la nada te corta". Se
+# distingue con la puntuación que Whisper ya devuelve en cada palabra: si
+# la última palabra antes del silencio termina en . ? ! o puntos
+# suspensivos, la pausa es entre frases y se corta como siempre. Si no
+# (sin puntuación, o con coma), hace falta una pausa bastante más larga
+# para tocarla, y se deja más resto de silencio para que el ritmo siga
+# sonando natural. Si Whisper no puntúa un tramo (pasa a veces), todo cae
+# en "dentro de frase" y se corta MENOS -- el lado seguro.
+PAUSA_MINIMA_DENTRO_DE_FRASE_MS = 1000
+MARGEN_DENTRO_DE_FRASE_MS = 250   # 2x250 = 500ms de pausa quedan audibles
+PUNTUACION_FIN_DE_FRASE = ".?!…"
+
 # Un corte nunca pisa el inicio de una palabra según Whisper: si Whisper
 # transcribió una palabra que arranca dentro de un silencio detectado por
 # volumen, eso es voz baja, no silencio. El corte se recorta para terminar
@@ -177,6 +193,12 @@ PRESET_SEGMENTO = "ultrafast"
 CRF_SEGMENTO = 18
 PRESET_FINAL = "veryfast"
 CRF_FINAL = 21
+# Fundido de entrada/salida del audio en cada tramo cortado. Aunque el
+# corte caiga dentro de un silencio, el ruido de fondo no es cero y el
+# salto de una muestra a otra se oye como un "clic" que delata el corte
+# (2026-09-26). 12ms es inaudible como fundido y suficiente para que la
+# unión suene continua.
+FUNDIDO_AUDIO_SEG = 0.012
 
 # --- Validación ---
 TAMANO_MINIMO_BYTES = 10_000     # por debajo de esto, se descarta como vacío/truncado

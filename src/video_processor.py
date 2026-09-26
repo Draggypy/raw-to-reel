@@ -37,13 +37,23 @@ def _cortar_un_tramo(video: Path, tramo: Tramo, destino: Path) -> None:
     con `-ss` adelante, y la diferencia crece cuanto más adentro del
     video esté el tramo. Sigue siendo exacto porque se re-codifica: con
     `-ss` antes del `-i` ffmpeg busca el keyframe previo y descarta los
-    frames sobrantes hasta el timestamp pedido."""
+    frames sobrantes hasta el timestamp pedido.
+
+    El audio lleva un fundido corto de entrada y de salida para que la
+    unión con el tramo vecino no haga "clic" (ver FUNDIDO_AUDIO_SEG)."""
+    fundido = min(config.FUNDIDO_AUDIO_SEG, tramo.duracion / 2)
+    inicio_fundido_salida = max(0.0, tramo.duracion - fundido)
+    filtro_audio = (
+        f"afade=t=in:st=0:d={fundido:.3f},"
+        f"afade=t=out:st={inicio_fundido_salida:.3f}:d={fundido:.3f}"
+    )
     comando = [
         "ffmpeg", "-y", "-hide_banner", "-loglevel", "error",
         "-ss", f"{tramo.inicio:.3f}",
         "-i", str(video),
         "-t", f"{tramo.duracion:.3f}",
         "-c:v", "libx264", "-preset", config.PRESET_SEGMENTO, "-crf", str(config.CRF_SEGMENTO),
+        "-af", filtro_audio,
         "-c:a", "aac", "-b:a", "128k",
         str(destino),
     ]

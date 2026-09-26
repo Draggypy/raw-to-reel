@@ -27,7 +27,7 @@ Pensado para contenido vertical tipo **Reels, TikTok y Stories de Instagram**.
 ## Qué hace
 
 1. **Transcribe** el audio con [faster-whisper](https://github.com/SYSTRAN/faster-whisper), localmente, con timestamp por palabra.
-2. **Detecta** silencios (por volumen real del audio), muletillas ("eh", "o sea", "tipo"…) y repeticiones (cuando te trabás y arrancás la frase de nuevo).
+2. **Detecta** silencios (por volumen real del audio), muletillas ("eh", "o sea", "tipo"…) y repeticiones (cuando te trabás y arrancás la frase de nuevo). Distingue las pausas entre frases del ritmo natural dentro de una frase, para no cortarte mientras seguís hablando.
 3. **Consolida los cortes** en la lista final de tramos a conservar, cuidando de no dejar "flashes" de escena de una fracción de segundo.
 4. **Genera los subtítulos** (formato `.ass`) ya ajustados a los tiempos del video cortado.
 5. **Corta y quema los subtítulos** con `ffmpeg`.
@@ -274,13 +274,15 @@ Todo lo ajustable está en un solo archivo: [`src/config.py`](src/config.py). Ca
 | `DURACION_MINIMA_SILENCIO_MS` | `300` | Una pausa más corta que esto **no se detecta** como silencio. |
 | `MARGEN_SILENCIO_MS` | `150` | Cuánto silencio se deja en **cada borde** de un corte. Con 150, cada pausa cortada deja ~300 ms de silencio audible. Bajalo si querés cortes más secos; subilo si se siente que "corta apenas dejo de hablar". |
 | `CORTE_MINIMO_MS` | `150` | Cuánto tiene que **ahorrar** un corte (ya descontados los márgenes) para valer el salto visual. Evita los micro-cortes de 20 ms que se sentían como "corta de la nada". En la práctica, sólo se cortan pausas de `2 × MARGEN + CORTE_MINIMO` = 450 ms o más. |
+| `PAUSA_MINIMA_DENTRO_DE_FRASE_MS` / `MARGEN_DENTRO_DE_FRASE_MS` | `1000` / `250` | Una pausa **en medio de una frase** (la palabra anterior no termina en `.` `?` `!`) es ritmo del habla: sólo se corta si dura 1 s o más, y se dejan 500 ms de aire. Entre frases rige la regla normal. Subí el primero si sentís que corta mientras seguís hablando del mismo tema. |
 | `TRAMO_MINIMO_SEG` | `0.5` | Evita tramos conservados de una fracción de segundo (se ven como un parpadeo). |
+| `FUNDIDO_AUDIO_SEG` | `0.012` | Fundido de audio en cada borde de corte, para que la unión no haga "clic". |
 | `MARGEN_DB_SOBRE_PISO` | `17` | Sensibilidad del detector: el umbral de "silencio" es el piso de ruido del propio video + este margen. |
 | `UMBRAL_DB_MAX` | `-35` | El umbral nunca sube más que esto, para no entrar en rango de voz (la voz baja vive alrededor de -30 dB). |
 | `SUAVIZADO_SILENCIO_MS` / `HISTERESIS_DB` | `50` / `3` | Suavizan la curva de volumen y evitan que una voz floja que roza el umbral abra y cierre silencios varias veces por segundo. |
 | `MULETILLAS` | `eh, emm, mmm, este, o sea, tipo, digamos` | Lista de muletillas a cortar. Editala a tu forma de hablar. |
 | `MULETILLAS_AMBIGUAS` | `este, tipo, o sea` | Muletillas que también son palabras reales ("en este video"). Sólo se cortan si tienen una pausa real pegada. |
-| `VENTANA_REPETICION_SEG` | `1.5` | Cuán pegada tiene que estar una repetición para considerarse un arranque en falso. |
+| `VENTANA_REPETICION_SEG` | `1.5` | Cuán pegada tiene que estar una repetición para considerarse un arranque en falso. Además, tiene que haber una pausa real o una muletilla en el medio: repetir de corrido por énfasis ("al hablar, al hablar") no se corta. |
 
 ### Transcripción
 

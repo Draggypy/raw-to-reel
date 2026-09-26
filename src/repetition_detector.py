@@ -10,8 +10,9 @@ cortar. Una muletilla inequívoca ("eh", "emm") se corta siempre; una que
 también es palabra real ("este", "tipo") sólo si tiene una pausa real
 pegada, medida sobre el audio -- señal de duda, no de frase fluida. Una
 repetición sólo se corta si son 2 o más palabras exactas repetidas poco
-después -- una sola palabra repetida es demasiado común en el habla
-normal como para ser señal confiable de un arranque en falso.
+después Y hay señal de duda en el medio (una pausa real o una muletilla):
+repetir por énfasis ("al hablar, al hablar", "y pulas y pulas") es parte
+del discurso, no un arranque en falso.
 """
 
 import re
@@ -95,11 +96,38 @@ def detectar_muletillas(
     return cortes
 
 
-def detectar_repeticiones(palabras: List[Palabra]) -> List[Corte]:
+def _hay_duda_en_el_medio(
+    palabras: List[Palabra],
+    normalizadas: List[str],
+    fin_primera: int,
+    inicio_segunda: int,
+    silencios: Sequence[Silencio],
+) -> bool:
+    """Entre la última palabra de la primera aparición y la primera de la
+    segunda tiene que haber una pausa real (medida en el audio) o una
+    muletilla. Sin eso, la repetición es énfasis, no traba."""
+    desde = palabras[fin_primera].inicio
+    hasta = palabras[inicio_segunda].inicio
+    if any(desde <= s.inicio < hasta for s in silencios):
+        return True
+    return any(
+        normalizadas[k] in config.MULETILLAS for k in range(fin_primera + 1, inicio_segunda)
+    )
+
+
+def detectar_repeticiones(
+    palabras: List[Palabra], silencios: Sequence[Silencio] = ()
+) -> List[Corte]:
     """Detecta un arranque en falso: el hablante empieza una frase, se
     traba, y la vuelve a empezar igual ("yo creo que... yo creo que esto
     es genial"). Se corta la PRIMERA aparición y se conserva desde la
     segunda.
+
+    Sólo cuenta como traba si en el medio hay una pausa real (silencio
+    detectado por volumen) o una muletilla. Repetir de corrido por
+    énfasis -- "al hablar, al hablar, al hablar", "pulas y pulas y pulas"
+    -- es una forma de hablar, y cortarla metía un salto en medio de una
+    frase fluida (2026-09-26).
 
     CLAVE: la segunda aparición tiene que venir CASI PEGADA a la primera
     (a lo sumo REPETICION_MAX_PALABRAS_INTERMEDIAS palabras en el medio y
@@ -136,7 +164,9 @@ def detectar_repeticiones(palabras: List[Palabra]) -> List[Corte]:
             if encontrado:
                 break
 
-        if encontrado:
+        if encontrado and _hay_duda_en_el_medio(
+            palabras, normalizadas, i + encontrado[0] - 1, encontrado[1], silencios
+        ):
             _, j = encontrado
             fin = palabras[j].inicio - config.GUARDA_ONSET_SEG
             if fin > palabras[i].inicio:

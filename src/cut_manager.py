@@ -31,14 +31,34 @@ class Tramo:
         return self.fin - self.inicio
 
 
+def _termina_frase(palabras_ordenadas: List[Palabra], instante: float) -> bool:
+    """True si la última palabra que arranca antes de `instante` cierra
+    una frase según la puntuación de Whisper (o si no hay ninguna palabra
+    antes: el arranque del video se trata como aire muerto)."""
+    ultima = None
+    for p in palabras_ordenadas:
+        if p.inicio >= instante:
+            break
+        ultima = p
+    if ultima is None:
+        return True
+    texto = ultima.texto.rstrip("\"'»)]")
+    return bool(texto) and texto[-1] in config.PUNTUACION_FIN_DE_FRASE
+
+
 def cortes_desde_silencios(
     silencios: List[Silencio], palabras: Sequence[Palabra] = ()
 ) -> List[Corte]:
-    """El corte real es más angosto que el silencio detectado: deja
-    MARGEN_SILENCIO_MS de buffer en cada borde para no comerse el final
-    o el comienzo de una palabra.
+    """El corte real es más angosto que el silencio detectado: deja un
+    margen de buffer en cada borde para no comerse el final o el comienzo
+    de una palabra.
 
-    Además:
+    Reglas:
+    - Pausa ENTRE frases (la palabra anterior termina en . ? ! ...): se
+      corta con MARGEN_SILENCIO_MS. Pausa DENTRO de una frase: es ritmo
+      del habla, no aire muerto; sólo se corta si dura al menos
+      PAUSA_MINIMA_DENTRO_DE_FRASE_MS y se deja MARGEN_DENTRO_DE_FRASE_MS
+      a cada lado para que la pausa siga existiendo.
     - Si Whisper transcribió una palabra que ARRANCA dentro del silencio,
       ahí hay voz baja que el volumen no registró: el corte se recorta
       para terminar un margen antes de ese inicio. Sólo se miran inicios
@@ -53,19 +73,28 @@ def cortes_desde_silencios(
       nada. Con margen 150 y silencio mínimo 300, una pausa de 320ms
       generaba un corte de 20ms -- esos micro-cortes se sentían como que
       "de la nada corta" en medio de una frase."""
-    margen = config.MARGEN_SILENCIO_MS / 1000
+    margen_entre_frases = config.MARGEN_SILENCIO_MS / 1000
+    margen_dentro_de_frase = config.MARGEN_DENTRO_DE_FRASE_MS / 1000
+    pausa_minima_dentro_de_frase = config.PAUSA_MINIMA_DENTRO_DE_FRASE_MS / 1000
     corte_minimo = config.CORTE_MINIMO_MS / 1000
-    inicios_palabra = sorted(p.inicio for p in palabras)
+    palabras_ordenadas = sorted(palabras, key=lambda p: p.inicio)
 
     cortes = []
     for s in silencios:
+        if _termina_frase(palabras_ordenadas, s.inicio):
+            margen = margen_entre_frases
+        else:
+            if s.fin - s.inicio < pausa_minima_dentro_de_frase:
+                continue
+            margen = margen_dentro_de_frase
+
         inicio = s.inicio + margen
         fin = s.fin - margen
-        for inicio_palabra in inicios_palabra:
-            if inicio_palabra >= s.fin:
+        for p in palabras_ordenadas:
+            if p.inicio >= s.fin:
                 break
-            if inicio_palabra >= s.inicio:
-                fin = min(fin, inicio_palabra - margen)
+            if p.inicio >= s.inicio:
+                fin = min(fin, p.inicio - margen)
                 break
         if fin - inicio >= corte_minimo:
             cortes.append(Corte(inicio=inicio, fin=fin))

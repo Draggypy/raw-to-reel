@@ -135,5 +135,16 @@ class TestFFmpegPipelineReal(unittest.TestCase):
             self.assertGreater(video_destino.stat().st_size, 1000, "El video de salida está vacío o corrupto")
 
 
+class TestWhisperEngine(unittest.TestCase):
+
+    def test_faster_whisper_carga_modelo_cpu(self):
+        """Verifica que faster-whisper y el runtime ctranslate2 inicialicen correctamente."""
+        from faster_whisper import WhisperModel
+        # Usamos modelo 'tiny' para test rápido y liviano (~39MB)
+        modelo = WhisperModel("tiny", device="cpu", compute_type="int8")
+        self.assertIsNotNone(modelo)
+        del modelo
+
+
 if __name__ == "__main__":
     unittest.main()

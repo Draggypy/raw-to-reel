@@ -74,8 +74,15 @@ def _concatenar(segmentos: List[Path], destino: Path) -> None:
 def _escapar_ruta_para_filtro(ruta: Path) -> str:
     """El filtro ass= de ffmpeg usa ':' y ''' como caracteres especiales
     en su propio mini-lenguaje -- hay que escaparlos antes de envolver la
-    ruta entre comillas simples."""
-    texto = str(ruta).replace("\\", "\\\\").replace(":", "\\:").replace("'", "\\'")
+    ruta entre comillas simples.
+    
+    En Windows, usar barras '/' (formato posix) es el estándar soportado por
+    ffmpeg para evitar colisiones de escape con barras invertidas."""
+    if hasattr(ruta, "as_posix"):
+        texto = ruta.as_posix()
+    else:
+        texto = str(ruta).replace("\\", "/")
+    texto = texto.replace(":", "\\:").replace("'", "\\'")
     return f"'{texto}'"
 
 

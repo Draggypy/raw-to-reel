@@ -25,7 +25,7 @@ jobs:
       - name: Instalar FFmpeg con libass
         uses: FedericoCarboni/setup-ffmpeg@v3
         with:
-          token: ${{ secrets.GITHUB_TOKEN }}
+          github-token: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Verificar versión de FFmpeg
         run: |

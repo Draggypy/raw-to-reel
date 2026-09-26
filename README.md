@@ -2,7 +2,7 @@
 
 **Editor automático de video *talking-head*: de crudo a listo, sin tocar un editor.**
 
-Dejás un video de una persona hablando a cámara en una carpeta. RawToReel corta los silencios, las muletillas y los arranques en falso, agrega subtítulos palabra por palabra y te devuelve el video editado en otra carpeta. Todo corre en tu propia máquina: sin APIs externas, sin cuentas, sin subir tu video a ningún lado.
+Dejás un video de una persona hablando a cámara en una carpeta. RawToReel corta los silencios y las muletillas, agrega subtítulos palabra por palabra y te devuelve el video editado en otra carpeta. A propósito **no** corta repeticiones ("mirá qué pasa esto... pero podría pasar lo contrario"): es una forma común de aclarar una idea al hablar, no un error. Todo corre en tu propia máquina: sin APIs externas, sin cuentas, sin subir tu video a ningún lado.
 
 Pensado para contenido vertical tipo **Reels, TikTok y Stories de Instagram**.
 
@@ -27,7 +27,9 @@ Pensado para contenido vertical tipo **Reels, TikTok y Stories de Instagram**.
 ## Qué hace
 
 1. **Transcribe** el audio con [faster-whisper](https://github.com/SYSTRAN/faster-whisper), localmente, con timestamp por palabra.
-2. **Detecta** silencios (por volumen real del audio) y muletillas ("eh", "o sea", "tipo"…). Distingue las pausas entre frases del ritmo natural dentro de una frase, para no cortarte mientras seguís hablando. (El corte de repeticiones existe pero viene apagado: repetir para enfatizar es parte del discurso.)
+2. **Detecta** silencios (por volumen real del audio) y muletillas ("eh", "o sea", "tipo"…). Distingue las pausas entre frases del ritmo natural dentro de una frase, para no cortarte mientras seguís hablando.
+
+   > **¿Y las repeticiones ("yo creo que... yo creo que esto es genial")?** RawToReel **no las corta**, a propósito. Al hablar es muy común repetir una idea para reforzarla o aclararla ("mirá qué pasa esto... pero podría pasar lo contrario... pero pasa esto"), y eso no es un error de dicción: es una forma de explicarse. Cortarlo automáticamente terminaba borrando partes del mensaje que el usuario quería decir así, no por accidente. El editor prefiere especializarse en lo que sí puede distinguir con confianza — silencios reales y muletillas — antes que adivinar cuándo una repetición es un "arranque en falso" y cuándo es énfasis. (El detector de repeticiones sigue en el código, apagado por `CORTAR_REPETICIONES = False` en `src/config.py`, para quien quiera probarlo.)
 3. **Consolida los cortes** en la lista final de tramos a conservar, cuidando de no dejar "flashes" de escena de una fracción de segundo.
 4. **Genera los subtítulos** (formato `.ass`) ya ajustados a los tiempos del video cortado.
 5. **Corta y quema los subtítulos** con `ffmpeg`.
@@ -221,7 +223,7 @@ Muestra en vivo la etapa de cada video:
 [2026-09-24 12:33:40] (ninguno) -> esperando
 ```
 
-Las etapas, en orden: `extrayendo audio` → `transcribiendo` → `detectando silencios` → `buscando muletillas y repeticiones` → `consolidando cortes` → `generando subtítulos` → `cortando y renderizando` → `validando` → `moviendo a Listos`.
+Las etapas, en orden: `extrayendo audio` → `transcribiendo` → `detectando silencios` → `buscando muletillas` → `consolidando cortes` → `generando subtítulos` → `cortando y renderizando` → `validando` → `moviendo a Listos`.
 
 El historial completo queda en `Logs/editor_gianni.log` (una línea con fecha por evento, incluyendo cuántos silencios, muletillas y tramos encontró en cada video).
 
@@ -282,7 +284,7 @@ Todo lo ajustable está en un solo archivo: [`src/config.py`](src/config.py). Ca
 | `SUAVIZADO_SILENCIO_MS` / `HISTERESIS_DB` | `50` / `3` | Suavizan la curva de volumen y evitan que una voz floja que roza el umbral abra y cierre silencios varias veces por segundo. |
 | `MULETILLAS` | `eh, emm, mmm, este, o sea, tipo, digamos` | Lista de muletillas a cortar. Editala a tu forma de hablar. |
 | `MULETILLAS_AMBIGUAS` | `este, tipo, o sea` | Muletillas que también son palabras reales ("en este video"). Sólo se cortan si tienen una pausa real pegada. |
-| `CORTAR_REPETICIONES` | `False` | Cortar arranques en falso ("yo creo que... yo creo que"). Viene apagado: en la práctica repetimos para enfatizar y cortarlo metía saltos en discurso fluido. Ponelo en `True` para probarlo. |
+| `CORTAR_REPETICIONES` | `False` | Cortar arranques en falso ("yo creo que... yo creo que"). **Viene apagado a propósito**: en la práctica repetimos una idea para aclararla o darle énfasis ("mirá qué pasa esto... pero podría pasar lo contrario... pero pasa esto"), no sólo por trabarnos, y el corte automático no distingue bien un caso del otro. Ponelo en `True` si preferís que también intente cortar estas repeticiones. |
 | `VENTANA_REPETICION_SEG` | `1.5` | (Sólo con `CORTAR_REPETICIONES = True`.) Cuán pegada tiene que estar una repetición para considerarse un arranque en falso; además tiene que haber una pausa real o una muletilla en el medio. |
 
 ### Transcripción
@@ -324,7 +326,7 @@ Un solo programa (`src/main.py`) hace de vigilante y de procesador: escanea, pro
 | `scanner.py` | Elige el próximo video de `Crudos/` y confirma que el archivo esté **estable** (dos chequeos de tamaño) para no agarrar uno a medio copiar. |
 | `transcription.py` | Extrae el audio a WAV mono 16 kHz y transcribe con faster-whisper. **Carga el modelo y lo libera por cada video** para no acumular memoria de uno al siguiente. |
 | `silence_detector.py` | Detección de silencios sobre el audio con numpy. Usa un **umbral adaptativo**: el piso de ruido propio del video (percentil 10 del volumen, con un techo) más un margen, acotado a un rango. |
-| `repetition_detector.py` | Muletillas por lista y repeticiones por n-gramas exactos (2 a 6 palabras) casi pegados. **Sin IA extra: son reglas.** |
+| `repetition_detector.py` | Muletillas por lista (activo). También detecta repeticiones por n-gramas exactos (2 a 6 palabras) casi pegados, pero **cortarlas viene apagado** (`CORTAR_REPETICIONES`, ver configuración): repetir una idea para aclararla no es un error a corregir. **Sin IA extra: son reglas.** |
 | `cut_manager.py` | Convierte cortes en **tramos a conservar**; fusiona cortes muy cercanos; asegura el tramo mínimo; y traduce tiempos de la línea original a la línea ya cortada (`remapear_intervalo`). Es el módulo central. |
 | `subtitle_generator.py` | Remapea las palabras al video cortado, las agrupa en captions y escribe el `.ass`. |
 | `video_processor.py` | Todo lo de `ffmpeg`: corte por tramos, concatenación y quemado de subtítulos. |

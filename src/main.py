@@ -59,7 +59,7 @@ def procesar_video(video: Path) -> bool:
         except OSError:
             pass  # no crítico, es solo el WAV intermedio
 
-        logger.actualizar_estado(video.name, "buscando muletillas y repeticiones")
+        logger.actualizar_estado(video.name, "buscando muletillas")
         cortes_muletillas = repetition_detector.detectar_muletillas(resultado.palabras, silencios)
         cortes_repeticiones = (
             repetition_detector.detectar_repeticiones(resultado.palabras, silencios)

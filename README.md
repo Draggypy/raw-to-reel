@@ -1,154 +1,154 @@
 # RawToReel
 
-**Editor automático de video *talking-head*: de crudo a listo, sin tocar un editor.**
+**Automatic talking-head video editor: from raw to ready, without touching an editor.**
 
-Dejás un video de una persona hablando a cámara en una carpeta. RawToReel corta los silencios y las muletillas, agrega subtítulos palabra por palabra y te devuelve el video editado en otra carpeta. A propósito **no** corta repeticiones ("mirá qué pasa esto... pero podría pasar lo contrario"): es una forma común de aclarar una idea al hablar, no un error. Todo corre en tu propia máquina: sin APIs externas, sin cuentas, sin subir tu video a ningún lado.
+Drop a video of someone talking to camera into a folder. RawToReel cuts silences and filler words, adds word-by-word subtitles, and returns the edited video in another folder. On purpose, it **does not** cut repetitions ("look what happens here... but the opposite could happen... but this happens"): that's a common way of clarifying an idea while speaking, not a mistake. Everything runs on your own machine: no external APIs, no accounts, your video never gets uploaded anywhere.
 
-Pensado para contenido vertical tipo **Reels, TikTok y Stories de Instagram**.
+Built for vertical content like **Reels, TikTok, and Instagram Stories**.
 
 <p align="center">
-  <img src="assets/demo.gif" alt="Demostración de RawToReel" width="320">
+  <img src="assets/demo.gif" alt="RawToReel demo" width="320">
   <br>
-  <em>Video procesado de forma 100% automática con RawToReel (corte de pausas + subtítulos animados).</em>
+  <em>Video processed 100% automatically with RawToReel (pause cutting + animated subtitles).</em>
 </p>
 
 ```
    Crudos/                         RawToReel                         Listos/
 ┌──────────────┐    ┌──────────────────────────────────────┐    ┌──────────────┐
-│ mi-video.mp4 │ ─► │ transcribe → detecta → corta →       │ ─► │ mi-video.mp4 │
-│ (sin editar) │    │ subtitula → renderiza → valida       │    │ (editado)    │
+│ my-video.mp4 │ ─► │ transcribes → detects → cuts →        │ ─► │ my-video.mp4 │
+│ (unedited)   │    │ subtitles → renders → validates       │    │ (edited)     │
 └──────────────┘    └──────────────────────────────────────┘    └──────────────┘
                                    │
-                                   └─► si algo falla: Crudos/fallidos/  (el original nunca se pierde)
+                                   └─► if something fails: Crudos/fallidos/  (the original is never lost)
 ```
 
 ---
 
-## Qué hace
+## What it does
 
-1. **Transcribe** el audio con [faster-whisper](https://github.com/SYSTRAN/faster-whisper), localmente, con timestamp por palabra.
-2. **Detecta** silencios (por volumen real del audio) y muletillas ("eh", "o sea", "tipo"…). Distingue las pausas entre frases del ritmo natural dentro de una frase, para no cortarte mientras seguís hablando.
+1. **Transcribes** the audio locally with [faster-whisper](https://github.com/SYSTRAN/faster-whisper), with word-level timestamps.
+2. **Detects** silences (by the audio's real volume) and filler words ("um", "like", "you know"...). It distinguishes pauses between sentences from the natural rhythm within a sentence, so it doesn't cut you off while you're still talking.
 
-   > **¿Y las repeticiones ("yo creo que... yo creo que esto es genial")?** RawToReel **no las corta**, a propósito. Al hablar es muy común repetir una idea para reforzarla o aclararla ("mirá qué pasa esto... pero podría pasar lo contrario... pero pasa esto"), y eso no es un error de dicción: es una forma de explicarse. Cortarlo automáticamente terminaba borrando partes del mensaje que el usuario quería decir así, no por accidente. El editor prefiere especializarse en lo que sí puede distinguir con confianza — silencios reales y muletillas — antes que adivinar cuándo una repetición es un "arranque en falso" y cuándo es énfasis. (El detector de repeticiones sigue en el código, apagado por `CORTAR_REPETICIONES = False` en `src/config.py`, para quien quiera probarlo.)
-3. **Consolida los cortes** en la lista final de tramos a conservar, cuidando de no dejar "flashes" de escena de una fracción de segundo.
-4. **Genera los subtítulos** (formato `.ass`) ya ajustados a los tiempos del video cortado.
-5. **Corta y quema los subtítulos** con `ffmpeg`.
-6. **Valida** el resultado. Solo si pasa todos los chequeos se entrega a `Listos/`; si no, el video va a `Crudos/fallidos/` y el original queda intacto.
+   > **What about repetitions ("I think that... I think this is great")?** RawToReel **does not cut them**, on purpose. When speaking, it's very common to repeat an idea to reinforce or clarify it ("look what happens here... but the opposite could happen... but this happens"), and that's not a speech error — it's a way of explaining yourself. Cutting it automatically ended up deleting parts of the message the user meant to say that way, not by accident. The editor prefers to specialize in what it can confidently tell apart — real silences and filler words — rather than guess when a repetition is a "false start" and when it's emphasis. (The repetition detector is still in the code, turned off via `CORTAR_REPETICIONES = False` in `src/config.py`, for anyone who wants to try it.)
+3. **Consolidates the cuts** into the final list of segments to keep, being careful not to leave sub-second scene "flashes".
+4. **Generates subtitles** (`.ass` format) already aligned to the timing of the cut video.
+5. **Cuts and burns in the subtitles** with `ffmpeg`.
+6. **Validates** the result. Only if it passes every check is it delivered to `Listos/`; if not, the video goes to `Crudos/fallidos/` and the original stays untouched.
 
-## Requisitos y Especificaciones Técnicas
+## Requirements and Technical Specifications
 
-| Requisito | Detalle / Especificación |
+| Requirement | Detail / Specification |
 |---|---|
-| **Python** | Python 3.10 o superior (desarrollado y probado a fondo en **Python 3.12**). |
-| **FFmpeg** | Versión 5.0+ con `ffprobe` y soporte nativo compilado de `libass` (para subtítulos). |
-| **Sistemas operativos** | **Linux** (x86_64, aarch64), **Windows 10 / 11** (64-bit), **macOS** (Apple Silicon M1/M2/M3 e Intel). |
-| **Hardware** | Corre 100% en **CPU** (cuantización `int8`). No requiere GPU dedicada, aunque soporta aceleración NVIDIA CUDA si se configura en `config.py`. |
-| **Memoria RAM** | Mínimo 4 GB de RAM libre (recomendado 8 GB). |
-| **Almacenamiento** | ~500 MB libres para el modelo local de Whisper (se descarga una sola vez al primer inicio) + espacio temporal proporcional al video a procesar. |
+| **Python** | Python 3.10 or higher (developed and thoroughly tested on **Python 3.12**). |
+| **FFmpeg** | Version 5.0+ with `ffprobe` and native compiled `libass` support (for subtitles). |
+| **Operating systems** | **Linux** (x86_64, aarch64), **Windows 10 / 11** (64-bit), **macOS** (Apple Silicon M1/M2/M3 and Intel). |
+| **Hardware** | Runs 100% on **CPU** (`int8` quantization). No dedicated GPU required, though it supports NVIDIA CUDA acceleration if configured in `config.py`. |
+| **RAM** | Minimum 4 GB free RAM (8 GB recommended). |
+| **Storage** | ~500 MB free for the local Whisper model (downloaded once on first run) + temporary space proportional to the video being processed. |
 
 ---
 
-## Instalación paso a paso
+## Step-by-step installation
 
-Elegí tu sistema operativo y ejecutá los siguientes comandos en tu terminal:
+Pick your operating system and run the following commands in your terminal:
 
 ### 🐧 Linux (Ubuntu, Debian, Linux Mint, Pop!_OS)
 
 ```bash
-# 1. Instalar dependencias del sistema (Python, Git y FFmpeg con libass)
+# 1. Install system dependencies (Python, Git, and FFmpeg with libass)
 sudo apt update
 sudo apt install -y python3 python3-venv git ffmpeg
 
-# 2. Clonar el repositorio y entrar a la carpeta
+# 2. Clone the repository and enter the folder
 git clone https://github.com/Draggypy/raw-to-reel.git
 cd raw-to-reel
 
-# 3. Crear y activar el entorno virtual
+# 3. Create and activate the virtual environment
 python3 -m venv venv
 source venv/bin/activate
 
-# 4. Instalar las dependencias de Python
+# 4. Install the Python dependencies
 pip install --upgrade pip
 pip install -r requirements.txt
 ```
 
-> **Arch Linux:** `sudo pacman -S python git ffmpeg`  
+> **Arch Linux:** `sudo pacman -S python git ffmpeg`
 > **Fedora:** `sudo dnf install -y python3 git ffmpeg-free`
 
 ---
 
-### 🪟 Windows (10 y 11)
+### 🪟 Windows (10 and 11)
 
 > [!TIP]
-> **¿Primera vez configurando herramientas de desarrollo en Windows?**  
-> A diferencia de Linux o macOS, Windows no trae **Git** ni **FFmpeg** preinstalados, y al instalar Python es muy común olvidar vincularlo al sistema. Seguí estos pasos sencillos en **PowerShell** (o la app **Terminal de Windows**).
+> **First time setting up development tools on Windows?**
+> Unlike Linux or macOS, Windows doesn't come with **Git** or **FFmpeg** preinstalled, and it's very common to forget to link Python to the system when installing it. Follow these simple steps in **PowerShell** (or the **Windows Terminal** app).
 
-#### Paso 1: Instalar los programas necesarios (Git, FFmpeg y Python)
+#### Step 1: Install the required programs (Git, FFmpeg, and Python)
 
-Abrí una terminal de **PowerShell** como usuario normal e instalá las herramientas con `winget` (el gestor oficial de paquetes de Windows):
+Open a **PowerShell** terminal as a regular user and install the tools with `winget` (Windows' official package manager):
 
 ```powershell
-# 1. Instalar Git (fundamental para descargar y actualizar el proyecto)
+# 1. Install Git (essential for downloading and updating the project)
 winget install Git.Git
 
-# 2. Instalar FFmpeg (para el corte y procesamiento de video y subtítulos)
+# 2. Install FFmpeg (for cutting and processing video and subtitles)
 winget install Gyan.FFmpeg
 
-# 3. Instalar Python 3.12 (si todavía no lo tenés instalado)
+# 3. Install Python 3.12 (if you don't have it yet)
 winget install Python.Python.3.12
 ```
 
 > [!IMPORTANT]
-> **Si preferís instalar Python descargando el instalador oficial desde [python.org](https://www.python.org/downloads/):**  
-> En la primera pantalla del instalador, es **OBLIGATORIO** marcar la casilla inferior:  
-> ☑ **"Add python.exe to PATH"** (Agregar Python al PATH).  
-> Si omitís esta opción, la consola no reconocerá los comandos `python` ni `pip`.
+> **If you'd rather install Python by downloading the official installer from [python.org](https://www.python.org/downloads/):**
+> On the first screen of the installer, it's **MANDATORY** to check the box at the bottom:
+> ☑ **"Add python.exe to PATH"**.
+> If you skip this option, the console won't recognize the `python` or `pip` commands.
 
-#### Paso 2: Reiniciar la terminal
+#### Step 2: Restart the terminal
 
 > [!WARNING]
-> **Cerrá la ventana actual de PowerShell y volvé a abrirla.**  
-> Este paso es indispensable para que Windows cargue las nuevas variables de entorno (`PATH`). Para verificar que todo quedó disponible, ejecutá:
+> **Close the current PowerShell window and open a new one.**
+> This step is essential for Windows to load the new environment variables (`PATH`). To check that everything is available, run:
 > ```powershell
 > git --version
 > python --version
 > ffmpeg -version
 > ```
-> Si los tres responden con su número de versión, ya tenés la base lista.
+> If all three respond with a version number, you're ready to go.
 
-#### Paso 3: Clonar el proyecto y crear el entorno virtual
+#### Step 3: Clone the project and create the virtual environment
 
 ```powershell
-# 1. Clonar el repositorio y entrar a la carpeta
+# 1. Clone the repository and enter the folder
 git clone https://github.com/Draggypy/raw-to-reel.git
 cd raw-to-reel
 
-# 2. Crear el entorno virtual aislado para las dependencias
+# 2. Create the isolated virtual environment for dependencies
 python -m venv venv
 
-# 3. Activar el entorno virtual
+# 3. Activate the virtual environment
 .\venv\Scripts\Activate.ps1
 ```
 
 > [!NOTE]
-> **¿Aparece un error en rojo que dice *"la ejecución de scripts está deshabilitada en este sistema"*?**  
-> PowerShell bloquea la ejecución de scripts por defecto. Habilitala para tu usuario ejecutando:
+> **Getting a red error saying *"running scripts is disabled on this system"*?**
+> PowerShell blocks script execution by default. Enable it for your user by running:
 > ```powershell
 > Set-ExecutionPolicy -Scope CurrentUser RemoteSigned
 > ```
-> Presioná `S` (Sí) y volvé a ejecutar: `.\venv\Scripts\Activate.ps1`.  
-> Sabrás que está activo porque aparecerá `(venv)` al inicio de tu línea de comandos.  
-> *(Si usás el Símbolo del sistema tradicional `cmd.exe`, podés activarlo con: `venv\Scripts\activate.bat`)*.
+> Press `Y` (Yes) and run again: `.\venv\Scripts\Activate.ps1`.
+> You'll know it's active because `(venv)` will appear at the start of your command line.
+> *(If you use the traditional Command Prompt `cmd.exe`, you can activate it with: `venv\Scripts\activate.bat`)*.
 
-#### Paso 4: Instalar las dependencias de Python
+#### Step 4: Install the Python dependencies
 
-Con el entorno `(venv)` activo en tu terminal:
+With the `(venv)` environment active in your terminal:
 
 ```powershell
-# 1. Actualizar pip
+# 1. Upgrade pip
 python -m pip install --upgrade pip
 
-# 2. Instalar todas las librerías necesarias (faster-whisper, torch, etc.)
+# 2. Install all required libraries (faster-whisper, torch, etc.)
 pip install -r requirements.txt
 ```
 
@@ -156,90 +156,90 @@ pip install -r requirements.txt
 
 ### 🍎 macOS (Apple Silicon M1/M2/M3 / Intel)
 
-Abrí la **Terminal**:
+Open **Terminal**:
 
 ```bash
-# 1. Instalar dependencias con Homebrew (si no tenés Homebrew: https://brew.sh)
+# 1. Install dependencies with Homebrew (if you don't have Homebrew: https://brew.sh)
 brew install ffmpeg python git
 
-# 2. Clonar el repositorio y entrar a la carpeta
+# 2. Clone the repository and enter the folder
 git clone https://github.com/Draggypy/raw-to-reel.git
 cd raw-to-reel
 
-# 3. Crear y activar el entorno virtual
+# 3. Create and activate the virtual environment
 python3 -m venv venv
 source venv/bin/activate
 
-# 4. Instalar las dependencias de Python
+# 4. Install the Python dependencies
 pip install --upgrade pip
 pip install -r requirements.txt
 ```
 
 ---
 
-### Verificación de la instalación
+### Verifying the installation
 
-Para comprobar que todo tu entorno (FFmpeg, Whisper y dependencias) quedó configurado y funcionando al 100%, podés ejecutar la suite de pruebas automatizada:
+To confirm your whole environment (FFmpeg, Whisper, and dependencies) is set up and working 100%, you can run the automated test suite:
 
 ```bash
 python -m unittest tests/test_core.py -v
 ```
 
-Si todo está en orden, verás todas las pruebas pasando con `OK`.
+If everything's in order, you'll see every test pass with `OK`.
 
-> **Carpetas listas desde el primer momento:** El repositorio ya viene con las carpetas `Crudos/` (donde soltás tus videos) y `Listos/` (donde recibís el video final con subtítulos y sin silencios). No necesitás crear ninguna carpeta a mano; las carpetas temporales y de logs se gestionan solas.
+> **Folders ready from the start:** the repository already comes with the `Crudos/` folder (where you drop your videos) and `Listos/` (where you get the final video with subtitles and no silences). You don't need to create any folder by hand; the temp and log folders are managed automatically.
 
-## Cómo se usa
+## How to use it
 
-### Uso básico
+### Basic usage
 
 ```bash
-# Activar el entorno virtual (si no está activo)
-source venv/bin/activate          # en Windows: .\venv\Scripts\Activate.ps1
+# Activate the virtual environment (if not already active)
+source venv/bin/activate          # on Windows: .\venv\Scripts\Activate.ps1
 python src/main.py
 ```
 
-1. Copiá un video a `Crudos/` (formatos: `.mp4`, `.mov`, `.mkv`, `.avi`).
-2. El programa lo detecta solo. Espera a que termine de copiarse (mira que el tamaño del archivo deje de cambiar), así que podés pasar archivos desde el celular o un USB sin problema.
-3. Lo procesa. Cuando termina, aparece en `Listos/` **con el mismo nombre**.
-4. El original desaparece de `Crudos/` **recién cuando la copia en `Listos/` ya fue verificada.**
+1. Copy a video into `Crudos/` (formats: `.mp4`, `.mov`, `.mkv`, `.avi`).
+2. The program detects it on its own. It waits until the copy is finished (it watches for the file size to stop changing), so you can transfer files from your phone or a USB drive with no issues.
+3. It processes it. When it's done, it appears in `Listos/` **with the same name**.
+4. The original disappears from `Crudos/` **only once the copy in `Listos/` has been verified.**
 
-El programa queda corriendo y vigilando `Crudos/`. Procesa **un video a la vez**, del más viejo al más nuevo. Para pararlo: `Ctrl+C` (termina el video que está procesando y sale).
+The program stays running, watching `Crudos/`. It processes **one video at a time**, oldest to newest. To stop it: `Ctrl+C` (it finishes the video currently being processed, then exits).
 
-### Ver qué está haciendo
+### Watching what it's doing
 
-En otra terminal, sin necesidad de activar el `venv`:
+In another terminal, no need to activate the `venv`:
 
 ```bash
-python3 ver_estado.py        # en Windows: python ver_estado.py
+python3 ver_estado.py        # on Windows: python ver_estado.py
 ```
 
-Muestra en vivo la etapa de cada video:
+Shows the live stage of each video:
 
 ```
-[2026-09-24 12:30:01] mi-video.mp4 -> transcribiendo
-[2026-09-24 12:31:14] mi-video.mp4 -> detectando silencios
+[2026-09-24 12:30:01] my-video.mp4 -> transcribing
+[2026-09-24 12:31:14] my-video.mp4 -> detecting silences
 ...
-[2026-09-24 12:33:40] (ninguno) -> esperando
+[2026-09-24 12:33:40] (none) -> waiting
 ```
 
-Las etapas, en orden: `extrayendo audio` → `transcribiendo` → `detectando silencios` → `buscando muletillas` → `consolidando cortes` → `generando subtítulos` → `cortando y renderizando` → `validando` → `moviendo a Listos`.
+The stages, in order: `extracting audio` → `transcribing` → `detecting silences` → `looking for filler words` → `consolidating cuts` → `generating subtitles` → `cutting and rendering` → `validating` → `moving to Listos`.
 
-El historial completo queda en `Logs/editor_gianni.log` (una línea con fecha por evento, incluyendo cuántos silencios, muletillas y tramos encontró en cada video).
+The full history is kept in `Logs/editor_gianni.log` (one dated line per event, including how many silences, filler words, and segments it found for each video).
 
-### Dejarlo corriendo siempre (Linux, systemd)
+### Keeping it running permanently (Linux, systemd)
 
-Si querés que arranque con la máquina y procese solo lo que dejes en `Crudos/`, podés usar un servicio de usuario. Ejemplo (`~/.config/systemd/user/raw-to-reel.service`), ajustando las rutas:
+If you want it to start with the machine and process whatever you drop into `Crudos/`, you can use a user service. Example (`~/.config/systemd/user/raw-to-reel.service`), adjusting the paths:
 
 ```ini
 [Unit]
-Description=RawToReel - Editor automático de video
+Description=RawToReel - Automatic video editor
 
 [Service]
-WorkingDirectory=/ruta/a/raw-to-reel
-ExecStart=/ruta/a/raw-to-reel/venv/bin/python /ruta/a/raw-to-reel/src/main.py
+WorkingDirectory=/path/to/raw-to-reel
+ExecStart=/path/to/raw-to-reel/venv/bin/python /path/to/raw-to-reel/src/main.py
 Restart=on-failure
-# Recomendado en máquinas chicas: que no acapare recursos
+# Recommended on small machines: don't hog resources
 Nice=15
 CPUQuota=200%
 MemoryMax=2500M
@@ -254,224 +254,224 @@ systemctl --user enable --now raw-to-reel.service
 systemctl --user status raw-to-reel.service
 ```
 
-> **Ojo si mudás la carpeta del proyecto:** hay que actualizar las rutas del `.service` y correr `daemon-reload` + `restart`. Si no, el servicio sigue "activo" pero mirando una carpeta vieja y no procesa nada.
+> **Careful if you move the project folder:** you'll need to update the paths in the `.service` file and run `daemon-reload` + `restart`. Otherwise the service keeps showing as "active" while watching an old folder and processes nothing.
 
-## Qué le pasa a tus archivos
+## What happens to your files
 
-- **El original nunca se toca hasta el final.** Se procesa una copia temporal en `Temp/`. Solo cuando la copia terminada está en `Listos/` y su tamaño coincide con el temporal se borra el original de `Crudos/`.
-- **Si algo falla** (transcripción vacía, error de `ffmpeg`, validación que no pasa) el original se mueve a `Crudos/fallidos/` para no reintentarse en bucle. La causa queda en `Logs/editor_gianni.log`.
-- **Para reintentar** un video fallido: devolvelo a `Crudos/`.
-- Todo lo de `Crudos/`, `Listos/`, `Temp/` y `Logs/` está en el `.gitignore`: tus videos nunca llegan al repositorio.
+- **The original is never touched until the end.** A temporary copy is processed in `Temp/`. Only once the finished copy is in `Listos/` and its size matches the temporary file is the original deleted from `Crudos/`.
+- **If something fails** (empty transcription, an `ffmpeg` error, a failed validation) the original is moved to `Crudos/fallidos/` so it isn't retried in a loop. The cause is recorded in `Logs/editor_gianni.log`.
+- **To retry** a failed video: move it back into `Crudos/`.
+- Everything under `Crudos/`, `Listos/`, `Temp/`, and `Logs/` is in `.gitignore`: your videos never end up in the repository.
 
-## Solución de problemas
+## Troubleshooting
 
-### El video terminó en `Crudos/fallidos/`
+### The video ended up in `Crudos/fallidos/`
 
-Buscá la línea en el log — dice el motivo exacto, no hace falta adivinar:
+Look for the line in the log — it states the exact reason, no need to guess:
 
 ```bash
 grep -B 15 "Movido a fallidos" Logs/editor_gianni.log | tail -30
 ```
 
-Las causas más comunes, de la más frecuente a la menos:
+The most common causes, from most to least frequent:
 
-| Mensaje en el log | Qué pasó | Qué hacer |
+| Message in the log | What happened | What to do |
 |---|---|---|
-| `El video no tiene pista de audio` / `La pista de audio del video está vacía` | **El celular grabó video pero no audio.** El archivo tiene la pista de audio creada pero con cero muestras (0 bytes de sonido) — pasa cuando otra app (una llamada, un grabador de voz, un asistente) tenía tomado el micrófono al empezar a grabar, o con el micrófono silenciado/tapado. | Reproducí el video: si no se escucha nada, confirmado. Hay que volver a grabar — no hay audio que editar. |
-| `la transcripción no devolvió ninguna palabra` | El audio existe y suena, pero Whisper no reconoció habla en español: volumen muy bajo, mucho ruido de fondo/eco, el micrófono lejos, o el clip es de otra cosa (música, ambiente, silencio con ruido). | Grabá más cerca del micrófono y con menos ruido de fondo. Si hablás en otro idioma, ajustá `IDIOMA_WHISPER`. |
-| `ffmpeg falló extrayendo audio: ...` | El contenedor del video está roto o `ffmpeg` no reconoce el códec de audio/video. Puede ser un archivo a medio grabar (se cortó la luz, se llenó el almacenamiento) o un formato exótico. | Corré `ffprobe tu-video.mp4` y mirá qué dice de los streams. Si el archivo se ve incompleto, es un video corrupto, no un bug del editor. |
-| `ffmpeg falló cortando un tramo` / `ffmpeg falló concatenando` / `ffmpeg falló quemando subtítulos` | Un paso puntual de `ffmpeg` falló — el mensaje completo (en `Logs/editor_gianni.log`, no se recorta) trae el error real de `ffmpeg` abajo. | Copiá el mensaje completo del log; casi siempre dice el problema concreto (códec no soportado, sin espacio en disco, fuente de subtítulo no encontrada). |
-| `ERROR de validación: pesa sólo N bytes` | El archivo final salió vacío o truncado — típicamente por quedarse sin espacio en disco a mitad del render. | Verificá espacio libre en `Temp/` y `Listos/`. |
-| `ERROR de validación: no tiene stream de video/audio` | El archivo final perdió una pista en el proceso (raro; señal de un `ffmpeg` con un build incompleto). | Reinstalá `ffmpeg` verificando que tenga `libass` y códecs de audio/video completos (ver Requisitos). |
-| `ERROR de validación: duración esperada ...` | La duración del video final no coincide con la esperada más allá del margen de tolerancia. Puede pasar con video grabado a **frame rate variable** (común en algunos celulares) en tomas muy largas o con muchísimos cortes. | Si es ocasional, no hay nada que hacer: es más seguro rechazar el video que entregar uno con desincronización. Si te pasa siempre con el mismo celular, avisá — hay margen para ajustar `TOLERANCIA_DURACION_POR_TRAMO_SEG`. |
-| `ERROR de validación: errores decodificando` | El archivo final quedó corrupto de alguna forma (raro, sería un bug real). | Guardá el video de `Temp/` (se borra al reintentar) y reportalo con el log completo. |
+| `El video no tiene pista de audio` / `La pista de audio del video está vacía` ("The video has no audio track" / "The video's audio track is empty") | **The phone recorded video but no audio.** The file has an audio track created but with zero samples (0 bytes of sound) — this happens when another app (a call, a voice recorder, an assistant) had the microphone locked when recording started, or the mic was muted/covered. | Play the video back: if you hear nothing, that confirms it. You'll need to re-record — there's no audio to edit. |
+| `la transcripción no devolvió ninguna palabra` ("the transcription returned no words") | The audio exists and has sound, but Whisper didn't recognize any speech in Spanish: volume too low, too much background noise/echo, the mic too far away, or the clip is of something else (music, ambient sound, noisy silence). | Record closer to the microphone and with less background noise. If you speak another language, adjust `IDIOMA_WHISPER`. |
+| `ffmpeg falló extrayendo audio: ...` ("ffmpeg failed extracting audio") | The video container is broken or `ffmpeg` doesn't recognize the audio/video codec. Could be a file that was recording when something interrupted it (power cut, storage filled up) or an exotic format. | Run `ffprobe your-video.mp4` and check what it says about the streams. If the file looks incomplete, it's a corrupted video, not a bug in the editor. |
+| `ffmpeg falló cortando un tramo` / `ffmpeg falló concatenando` / `ffmpeg falló quemando subtítulos` ("ffmpeg failed cutting a segment / concatenating / burning subtitles") | A specific `ffmpeg` step failed — the full message (in `Logs/editor_gianni.log`, never truncated) carries the actual `ffmpeg` error underneath. | Copy the full message from the log; it almost always states the concrete problem (unsupported codec, out of disk space, subtitle font not found). |
+| `ERROR de validación: pesa sólo N bytes` ("only weighs N bytes") | The final file came out empty or truncated — typically from running out of disk space mid-render. | Check free space in `Temp/` and `Listos/`. |
+| `ERROR de validación: no tiene stream de video/audio` ("has no video/audio stream") | The final file lost a track somewhere in the process (rare; a sign of an incomplete `ffmpeg` build). | Reinstall `ffmpeg`, making sure it has `libass` and complete audio/video codecs (see Requirements). |
+| `ERROR de validación: duración esperada ...` ("expected duration...") | The final video's duration doesn't match the expected one beyond the tolerance margin. Can happen with video recorded at a **variable frame rate** (common on some phones) on very long takes or with a huge number of cuts. | If it's occasional, there's nothing to do: it's safer to reject the video than to deliver one with desync. If it happens every time with the same phone, let us know — there's room to adjust `TOLERANCIA_DURACION_POR_TRAMO_SEG`. |
+| `ERROR de validación: errores decodificando` ("decoding errors") | The final file ended up corrupted somehow (rare — would be an actual bug). | Save the video from `Temp/` (it gets deleted on retry) and report it with the full log. |
 
-### El video SÍ llegó a `Listos/`, pero algo no se ve o no se escucha bien
+### The video DID make it to `Listos/`, but something looks or sounds off
 
-Esto no lo detecta la validación automática porque el archivo es técnicamente válido — hay que mirarlo:
+The automatic validation doesn't catch this because the file is technically valid — you have to look at it:
 
-| Síntoma | Causa probable | Dónde ajustar |
+| Symptom | Likely cause | Where to adjust |
 |---|---|---|
-| No aparecen subtítulos, o se ven con una tipografía fea/genérica | La fuente configurada en `FUENTE_SUBTITULOS` no está instalada en tu sistema; `ffmpeg`/`libass` cae en una fuente por defecto sin avisar (no es un error). | Instalá la fuente que quieras usar y poné su nombre exacto en `FUENTE_SUBTITULOS` (ver la nota sobre licencias en la tabla de Subtítulos). |
-| Los subtítulos están corridos en el tiempo respecto al audio | Señal de una desincronización audio/video real en el resultado. | Revisá `Logs/editor_gianni.log` de ese video buscando cuántos tramos tuvo — con muchísimos cortes el margen de error se acumula (ver `TOLERANCIA_DURACION_*` en Configuración). |
-| Sigue cortando en medio de una idea, sentís que "corta apenas dejo de hablar" | Ajuste fino de sensibilidad, no un bug. | Subí `PAUSA_MINIMA_DENTRO_DE_FRASE_MS` y/o `MARGEN_SILENCIO_MS` en `src/config.py`. |
-| Deja pausas larguísimas sin cortar | El umbral de silencio está muy exigente para tu nivel de ruido de fondo. | Bajá `MARGEN_DB_SOBRE_PISO` o subí `UMBRAL_DB_MAX` con cuidado (ver los comentarios en `config.py`, están ahí para no romper el balance). |
-| Corta "eh"/"tipo"/"este" que en realidad eran parte de una frase normal | Falso positivo de las muletillas. | Sacá esa palabra de `MULETILLAS` (o de `MULETILLAS_AMBIGUAS` si ya exige pausa) en `src/config.py`. |
+| No subtitles show up, or they look like an ugly/generic font | The font set in `FUENTE_SUBTITULOS` isn't installed on your system; `ffmpeg`/`libass` silently falls back to a default font (not an error). | Install the font you want to use and put its exact name in `FUENTE_SUBTITULOS` (see the licensing note in the Subtitles table). |
+| Subtitles are out of sync with the audio | A sign of real audio/video desync in the result. | Check `Logs/editor_gianni.log` for that video and see how many segments it had — with a huge number of cuts the error margin accumulates (see `TOLERANCIA_DURACION_*` in Configuration). |
+| Still cuts mid-thought, feels like "it cuts the moment I stop talking" | Fine-tuning of sensitivity, not a bug. | Raise `PAUSA_MINIMA_DENTRO_DE_FRASE_MS` and/or `MARGEN_SILENCIO_MS` in `src/config.py`. |
+| Leaves very long silences uncut | The silence threshold is too strict for your background noise level. | Lower `MARGEN_DB_SOBRE_PISO` or carefully raise `UMBRAL_DB_MAX` (see the comments in `config.py` — they're there so you don't break the balance). |
+| Cuts "um"/"like"/"this" ("este"/"tipo") that were actually part of a normal sentence | A filler-word false positive. | Remove that word from `MULETILLAS` (or from `MULETILLAS_AMBIGUAS` if it already requires a pause) in `src/config.py`. |
 
 ---
 
-## Configuración
+## Configuration
 
-Todo lo ajustable está en un solo archivo: [`src/config.py`](src/config.py). Cada constante tiene al lado un comentario que explica por qué tiene el valor que tiene. Los principales:
+Everything adjustable lives in a single file: [`src/config.py`](src/config.py). Every constant has a comment next to it explaining why it has the value it has. The main ones:
 
-### Cortes
+### Cuts
 
-| Constante | Valor por defecto | Qué controla |
+| Constant | Default value | What it controls |
 |---|---|---|
-| `DURACION_MINIMA_SILENCIO_MS` | `300` | Una pausa más corta que esto **no se detecta** como silencio. |
-| `MARGEN_SILENCIO_MS` | `150` | Cuánto silencio se deja en **cada borde** de un corte. Con 150, cada pausa cortada deja ~300 ms de silencio audible. Bajalo si querés cortes más secos; subilo si se siente que "corta apenas dejo de hablar". |
-| `CORTE_MINIMO_MS` | `150` | Cuánto tiene que **ahorrar** un corte (ya descontados los márgenes) para valer el salto visual. Evita los micro-cortes de 20 ms que se sentían como "corta de la nada". En la práctica, sólo se cortan pausas de `2 × MARGEN + CORTE_MINIMO` = 450 ms o más. |
-| `PAUSA_MINIMA_DENTRO_DE_FRASE_MS` / `MARGEN_DENTRO_DE_FRASE_MS` | `1000` / `250` | Una pausa **en medio de una frase** (la palabra anterior no termina en `.` `?` `!`) es ritmo del habla: sólo se corta si dura 1 s o más, y se dejan 500 ms de aire. Entre frases rige la regla normal. Subí el primero si sentís que corta mientras seguís hablando del mismo tema. |
-| `TRAMO_MINIMO_SEG` | `0.5` | Evita tramos conservados de una fracción de segundo (se ven como un parpadeo). |
-| `FUNDIDO_AUDIO_SEG` | `0.012` | Fundido de audio en cada borde de corte, para que la unión no haga "clic". |
-| `MARGEN_DB_SOBRE_PISO` | `17` | Sensibilidad del detector: el umbral de "silencio" es el piso de ruido del propio video + este margen. |
-| `UMBRAL_DB_MAX` | `-35` | El umbral nunca sube más que esto, para no entrar en rango de voz (la voz baja vive alrededor de -30 dB). |
-| `SUAVIZADO_SILENCIO_MS` / `HISTERESIS_DB` | `50` / `3` | Suavizan la curva de volumen y evitan que una voz floja que roza el umbral abra y cierre silencios varias veces por segundo. |
-| `MULETILLAS` | `eh, emm, mmm, este, o sea, tipo, digamos` | Lista de muletillas a cortar. Editala a tu forma de hablar. |
-| `MULETILLAS_AMBIGUAS` | `este, tipo, o sea` | Muletillas que también son palabras reales ("en este video"). Sólo se cortan si tienen una pausa real pegada. |
-| `CORTAR_REPETICIONES` | `False` | Cortar arranques en falso ("yo creo que... yo creo que"). **Viene apagado a propósito**: en la práctica repetimos una idea para aclararla o darle énfasis ("mirá qué pasa esto... pero podría pasar lo contrario... pero pasa esto"), no sólo por trabarnos, y el corte automático no distingue bien un caso del otro. Ponelo en `True` si preferís que también intente cortar estas repeticiones. |
-| `VENTANA_REPETICION_SEG` | `1.5` | (Sólo con `CORTAR_REPETICIONES = True`.) Cuán pegada tiene que estar una repetición para considerarse un arranque en falso; además tiene que haber una pausa real o una muletilla en el medio. |
+| `DURACION_MINIMA_SILENCIO_MS` | `300` | A pause shorter than this is **not detected** as silence. |
+| `MARGEN_SILENCIO_MS` | `150` | How much silence is left on **each edge** of a cut. At 150, every cut pause leaves ~300 ms of audible silence. Lower it for tighter cuts; raise it if it feels like "it cuts the moment I stop talking". |
+| `CORTE_MINIMO_MS` | `150` | How much a cut has to **save** (margins already subtracted) to be worth the visual jump. Prevents 20 ms micro-cuts that felt like "it cuts out of nowhere". In practice, only pauses of `2 × MARGEN + CORTE_MINIMO` = 450 ms or more get cut. |
+| `PAUSA_MINIMA_DENTRO_DE_FRASE_MS` / `MARGEN_DENTRO_DE_FRASE_MS` | `1000` / `250` | A pause **in the middle of a sentence** (the previous word doesn't end in `.` `?` `!`) is speech rhythm: it's only cut if it lasts 1 s or more, leaving 500 ms of air. Between sentences the normal rule applies. Raise the first one if it feels like it's cutting while you're still talking about the same topic. |
+| `TRAMO_MINIMO_SEG` | `0.5` | Prevents sub-second kept segments (they look like a flicker). |
+| `FUNDIDO_AUDIO_SEG` | `0.012` | Audio fade at each cut edge, so the join doesn't produce a "click". |
+| `MARGEN_DB_SOBRE_PISO` | `17` | Detector sensitivity: the "silence" threshold is the video's own noise floor plus this margin. |
+| `UMBRAL_DB_MAX` | `-35` | The threshold never rises above this, to avoid entering the voice range (soft speech sits around -30 dB). |
+| `SUAVIZADO_SILENCIO_MS` / `HISTERESIS_DB` | `50` / `3` | Smooth the volume curve and keep a soft voice that grazes the threshold from opening and closing silences several times a second. |
+| `MULETILLAS` | `eh, emm, mmm, este, o sea, tipo, digamos` | List of filler words to cut (Spanish). Edit it to match how you speak. |
+| `MULETILLAS_AMBIGUAS` | `este, tipo, o sea` | Filler words that are also real words ("in this video" — "en este video"). Only cut if they have a real pause right next to them. |
+| `CORTAR_REPETICIONES` | `False` | Cut false starts ("I think that... I think that"). **Turned off on purpose**: in practice we repeat an idea to clarify or emphasize it ("look what happens here... but the opposite could happen... but this happens"), not just because we stumble, and automatic cutting doesn't tell the two apart well. Set it to `True` if you'd rather it also try to cut these repetitions. |
+| `VENTANA_REPETICION_SEG` | `1.5` | (Only with `CORTAR_REPETICIONES = True`.) How close together a repetition has to be to count as a false start; it also needs a real pause or a filler word in between. |
 
-### Transcripción
+### Transcription
 
-| Constante | Valor por defecto | Qué controla |
+| Constant | Default value | What it controls |
 |---|---|---|
-| `IDIOMA_WHISPER` | `"es"` | Idioma del habla. **Está pensado para español**: la lista de muletillas también lo está. |
-| `MODELO_WHISPER` | `"small"` | Tamaño del modelo. `"base"` gasta menos RAM; `"medium"` transcribe mejor pero es más lento. |
-| `DEVICE_WHISPER` / `COMPUTE_TYPE_WHISPER` | `"cpu"` / `"int8"` | Con GPU NVIDIA se puede usar `"cuda"` y `"float16"`. |
+| `IDIOMA_WHISPER` | `"es"` | Spoken language. **Built for Spanish**: the filler-word list is too. |
+| `MODELO_WHISPER` | `"small"` | Model size. `"base"` uses less RAM; `"medium"` transcribes better but is slower. |
+| `DEVICE_WHISPER` / `COMPUTE_TYPE_WHISPER` | `"cpu"` / `"int8"` | With an NVIDIA GPU you can use `"cuda"` and `"float16"`. |
 
-### Subtítulos
+### Subtitles
 
-| Constante | Valor por defecto | Qué controla |
+| Constant | Default value | What it controls |
 |---|---|---|
-| `FUENTE_SUBTITULOS` | ver nota | **Tipografía. Cambiala por una que tengas instalada** (por ejemplo `"Arial"` o `"DejaVu Sans"`). |
-| `MAX_PALABRAS_POR_CAPTION` | `1` | Palabras por subtítulo (1 = palabra por palabra, estilo Reels). |
-| `FRACCION_TAMANO_FUENTE` | `0.075` | Tamaño de la letra como fracción del alto del video. |
-| `FRACCION_MARGEN_INFERIOR` | `0.20` | Distancia al borde de abajo (deja libre la zona de la interfaz de Instagram). |
-| `ESCALA_VERTICAL_SUBTITULOS` / `TRACKING_SUBTITULOS` | `125` / `-8` | Estiran la letra a lo alto y juntan las letras. |
+| `FUENTE_SUBTITULOS` | see note | **Font. Change it to one you have installed** (e.g. `"Arial"` or `"DejaVu Sans"`). |
+| `MAX_PALABRAS_POR_CAPTION` | `1` | Words per subtitle (1 = word by word, Reels style). |
+| `FRACCION_TAMANO_FUENTE` | `0.075` | Font size as a fraction of the video's height. |
+| `FRACCION_MARGEN_INFERIOR` | `0.20` | Distance from the bottom edge (keeps the Instagram UI area clear). |
+| `ESCALA_VERTICAL_SUBTITULOS` / `TRACKING_SUBTITULOS` | `125` / `-8` | Stretch the letters vertically and tighten letter spacing. |
 
-> **Sobre la fuente:** el valor por defecto apunta a una tipografía comercial que **no se distribuye con este repositorio**. Si no la tenés instalada, el render usa la fuente por defecto del sistema. Para tener un resultado consistente, elegí una fuente que tengas y poné su nombre en `FUENTE_SUBTITULOS`. Si la fuente que usás tiene licencia propia, respetala.
+> **About the font:** the default value points to a commercial typeface that **is not distributed with this repository**. If you don't have it installed, the render falls back to the system's default font. For a consistent result, pick a font you own and put its name in `FUENTE_SUBTITULOS`. If the font you use has its own license, respect it.
 
-### Calidad y velocidad del render
+### Render quality and speed
 
-| Constante | Por defecto | Qué controla |
+| Constant | Default | What it controls |
 |---|---|---|
-| `PRESET_SEGMENTO` / `CRF_SEGMENTO` | `ultrafast` / `18` | Codificación de los tramos intermedios (se borran al terminar). |
-| `PRESET_FINAL` / `CRF_FINAL` | `veryfast` / `21` | Codificación del video final. **Esta define la calidad real del archivo que publicás.** Para más calidad: preset `medium` y CRF `18` (más lento). |
+| `PRESET_SEGMENTO` / `CRF_SEGMENTO` | `ultrafast` / `18` | Encoding of the intermediate segments (deleted once done). |
+| `PRESET_FINAL` / `CRF_FINAL` | `veryfast` / `21` | Encoding of the final video. **This defines the real quality of the file you publish.** For higher quality: preset `medium` and CRF `18` (slower). |
 
 ---
 
-## Cómo funciona por dentro
+## How it works internally
 
-Un solo programa (`src/main.py`) hace de vigilante y de procesador: escanea, procesa y vuelve a escanear. No hay un proceso separado que observe la carpeta.
+A single program (`src/main.py`) acts as both watcher and processor: it scans, processes, and scans again. There's no separate process observing the folder.
 
-| Módulo | Qué hace |
+| Module | What it does |
 |---|---|
-| `main.py` | El bucle principal y la orquestación del pipeline. Maneja `Ctrl+C`/`SIGTERM` terminando limpio. |
-| `scanner.py` | Elige el próximo video de `Crudos/` y confirma que el archivo esté **estable** (dos chequeos de tamaño) para no agarrar uno a medio copiar. |
-| `transcription.py` | Extrae el audio a WAV mono 16 kHz y transcribe con faster-whisper. **Carga el modelo y lo libera por cada video** para no acumular memoria de uno al siguiente. |
-| `silence_detector.py` | Detección de silencios sobre el audio con numpy. Usa un **umbral adaptativo**: el piso de ruido propio del video (percentil 10 del volumen, con un techo) más un margen, acotado a un rango. |
-| `repetition_detector.py` | Muletillas por lista (activo). También detecta repeticiones por n-gramas exactos (2 a 6 palabras) casi pegados, pero **cortarlas viene apagado** (`CORTAR_REPETICIONES`, ver configuración): repetir una idea para aclararla no es un error a corregir. **Sin IA extra: son reglas.** |
-| `cut_manager.py` | Convierte cortes en **tramos a conservar**; fusiona cortes muy cercanos; asegura el tramo mínimo; y traduce tiempos de la línea original a la línea ya cortada (`remapear_intervalo`). Es el módulo central. |
-| `subtitle_generator.py` | Remapea las palabras al video cortado, las agrupa en captions y escribe el `.ass`. |
-| `video_processor.py` | Todo lo de `ffmpeg`: corte por tramos, concatenación y quemado de subtítulos. |
-| `validator.py` | Chequeos del archivo final (ver abajo). |
-| `file_manager.py` | La coreografía segura de entregar a `Listos/` y recién entonces borrar el original. |
-| `logger.py` | Log de texto + `Logs/estado.json` (escritura atómica) que lee `ver_estado.py`. |
+| `main.py` | The main loop and pipeline orchestration. Handles `Ctrl+C`/`SIGTERM` with a clean shutdown. |
+| `scanner.py` | Picks the next video from `Crudos/` and confirms the file is **stable** (two size checks) so it doesn't grab one mid-copy. |
+| `transcription.py` | Extracts the audio to a mono 16 kHz WAV and transcribes it with faster-whisper. **Loads the model and releases it for every video** so memory doesn't build up from one video to the next. |
+| `silence_detector.py` | Silence detection over the audio using numpy. Uses an **adaptive threshold**: the video's own noise floor (10th percentile of volume, with a ceiling) plus a margin, capped to a range. |
+| `repetition_detector.py` | Filler words by list (active). Also detects repetitions via exact n-grams (2 to 6 words) close together, but **cutting them is turned off** (`CORTAR_REPETICIONES`, see Configuration): repeating an idea to clarify it isn't an error to fix. **No extra AI: it's all rules.** |
+| `cut_manager.py` | Turns cuts into **segments to keep**; merges cuts that are too close together; enforces the minimum segment length; and translates times from the original timeline to the already-cut one (`remapear_intervalo`). It's the central module. |
+| `subtitle_generator.py` | Remaps words onto the cut video, groups them into captions, and writes the `.ass` file. |
+| `video_processor.py` | Everything `ffmpeg`-related: cutting by segment, concatenation, and burning in subtitles. |
+| `validator.py` | Checks on the final file (see below). |
+| `file_manager.py` | The safe choreography of delivering to `Listos/` and only then deleting the original. |
+| `logger.py` | Text log + `Logs/estado.json` (atomic write) that `ver_estado.py` reads. |
 
-### Decisiones de diseño que vale la pena conocer
+### Design decisions worth knowing
 
-- **Los cortes de silencio se basan en el volumen real, no en los tiempos de Whisper.** Whisper suele estirar el final de cada palabra hasta el inicio de la siguiente, "tragándose" la pausa del medio. Si el detector de volumen dice que ahí no hay sonido, no hay palabra que proteger. Un margen en cada borde es la única protección necesaria.
-- **Nunca se fusionan dos cortes si en el medio empieza una palabra.** Fusionar borraría lo que queda adentro; se prefiere un tramo corto antes que perder algo que se dijo.
-- **Un tramo con palabras pero demasiado corto se ensancha** (devolviéndole un poco de silencio al video) en vez de descartarse.
-- **El corte se hace tramo por tramo a su propio archivo**, con `-ss` antes del `-i`, y después se unen **sin recodificar** (`concat` con `-c copy`). Un único filtro gigante con un `trim` por tramo hacía que `ffmpeg` gastara mucha más memoria de la esperada. Es la razón por la que corre bien en máquinas modestas.
-- **No se asume una tasa de cuadros constante.** Los celulares graban con *frame rate* variable; cortar con `select+setpts` asumiéndola constante produce desincronización de audio y video. Acá el video y el audio se cortan con el mismo intervalo.
-- **Solo la pasada final recodifica con calidad real.** Los tramos intermedios se codifican rápido (`ultrafast`) y se descartan.
-- **Los subtítulos son remapeados, no re-transcritos:** las palabras de la transcripción se trasladan a los tiempos ya cortados, y una palabra que ya no está en el video final no genera subtítulo.
-- **Las muletillas se cortan siempre que aparezcan en la lista**, sin exigir una pausa alrededor (Whisper casi nunca deja timestamps con esa separación limpia). El costo: "este" y "tipo" también son palabras reales y a veces se corta un uso legítimo. Si te molesta, sacalas de `MULETILLAS`.
+- **Silence cuts are based on real volume, not on Whisper's timings.** Whisper tends to stretch the end of each word up to the start of the next one, "swallowing" the pause in between. If the volume detector says there's no sound there, there's no word to protect. A margin on each edge is the only protection needed.
+- **Two cuts are never merged if a word starts in between them.** Merging would delete whatever's in there; a short segment is preferred over losing something that was said.
+- **A segment with words in it that's too short gets widened instead** (giving a bit of silence back to the video), rather than discarded.
+- **Cutting is done segment by segment, each to its own file**, with `-ss` before `-i`, and they're joined afterward **without re-encoding** (`concat` with `-c copy`). A single giant filter with a `trim` per segment made `ffmpeg` use far more memory than expected. That's why it runs fine on modest machines.
+- **It doesn't assume a constant frame rate.** Phones record at a variable frame rate; cutting with `select+setpts` assuming a constant one produces audio/video desync. Here, video and audio are cut using the same interval.
+- **Only the final pass re-encodes at real quality.** The intermediate segments are encoded fast (`ultrafast`) and discarded.
+- **Subtitles are remapped, not re-transcribed:** the transcription's words are shifted onto the already-cut timing, and a word that's no longer in the final video doesn't produce a subtitle.
+- **Filler words are cut every time they appear on the list**, without requiring a pause around them (Whisper almost never leaves timestamps with that clean a gap). The cost: "este" and "tipo" are also real words, and sometimes a legitimate use gets cut. If it bothers you, remove them from `MULETILLAS`.
 
-### Cómo se valida el resultado
+### How the result is validated
 
-Antes de entregar, `validator.py` corre estos chequeos de menor a mayor costo y se detiene en el primero que falla:
+Before delivering, `validator.py` runs these checks from cheapest to most expensive and stops at the first one that fails:
 
-1. El archivo existe y pesa más de 10 KB.
-2. `ffprobe` lo abre y tiene stream de **video y de audio**.
-3. La **duración real coincide con la esperada** (la suma de los tramos). La tolerancia **escala con la cantidad de tramos** (`0,15 s + 0,02 s por tramo`), porque el redondeo a nivel de cuadro de cada corte se acumula: una tolerancia fija fallaba en videos con muchos cortes sin que hubiera nada mal.
-4. Se decodifica completo con `ffmpeg` **sin un solo error**.
+1. The file exists and weighs more than 10 KB.
+2. `ffprobe` can open it and it has both a **video and an audio** stream.
+3. The **real duration matches the expected one** (the sum of the segments). The tolerance **scales with the number of segments** (`0.15 s + 0.02 s per segment`), because the frame-level rounding of each cut accumulates: a fixed tolerance used to fail on videos with many cuts even though nothing was actually wrong.
+4. It decodes completely with `ffmpeg` **without a single error**.
 
 ---
 
-## Límites conocidos
+## Known limits
 
-- **Español primero.** El idioma y la lista de muletillas vienen configurados para español; para otro idioma hay que cambiar `IDIOMA_WHISPER` y `MULETILLAS`.
-- **Un video a la vez.** No hay procesamiento en paralelo (es a propósito: cuida la memoria).
-- **Está pensado para una persona hablando a cámara.** No es un editor general: no hace transiciones, música, zoom ni B-roll.
-- **Los subtítulos y los cortes se ajustan a gusto.** Los valores por defecto salen de uso real, pero cada voz y cada micrófono son distintos: probá con un video corto y ajustá `config.py`.
-- **La transcripción puede equivocarse** en nombres propios, jerga o audio con mucho ruido, y esos errores pasan a los subtítulos. Revisá el resultado antes de publicar.
-- **El render es lento en CPU.** Depende mucho de la máquina y del largo del video.
+- **Spanish first.** The language and the filler-word list are configured for Spanish; for another language you'll need to change `IDIOMA_WHISPER` and `MULETILLAS`.
+- **One video at a time.** No parallel processing (on purpose: it's easier on memory).
+- **Built for one person talking to camera.** It's not a general-purpose editor: no transitions, music, zoom, or B-roll.
+- **Subtitles and cuts are tuned to taste.** The defaults come from real-world use, but every voice and every microphone is different: try it with a short video and adjust `config.py`.
+- **Transcription can get things wrong**, on proper nouns, slang, or noisy audio, and those errors carry over into the subtitles. Review the result before publishing.
+- **Rendering is slow on CPU.** It depends heavily on the machine and the length of the video.
 
-## Solución de problemas
+## Troubleshooting (setup)
 
-| Síntoma | Qué mirar |
+| Symptom | What to check |
 |---|---|
-| `'git' no se reconoce como un comando interno o externo` (Windows) | Git no está instalado o no se reinició la terminal. Instalalo con `winget install Git.Git` (o desde [git-scm.com](https://git-scm.com)) y abrí una nueva ventana de PowerShell. |
-| `'python' no se reconoce como un comando interno o externo` (Windows) | No se marcó la casilla **"Add python.exe to PATH"** al instalar Python. Volvé a abrir el instalador descargado de Python, elegí **Modify** y tildá la opción para agregarlo al PATH. |
-| Error `ExecutionPolicy` / `la ejecución de scripts está deshabilitada` (Windows) | En PowerShell ejecutá: `Set-ExecutionPolicy -Scope CurrentUser RemoteSigned` (confirmá con `S`) y volvé a activar con `.\venv\Scripts\Activate.ps1`. |
-| `ffmpeg` / `ffprobe` "not found" o no se reconoce | No están en el `PATH` del sistema. En Windows: `winget install Gyan.FFmpeg` y reiniciá PowerShell. En Linux: `sudo apt install ffmpeg`. En Mac: `brew install ffmpeg`. |
-| Dejo un video y no pasa nada | ¿El video está dentro de la carpeta `Crudos/`? ¿La extensión es `.mp4`, `.mov`, `.mkv` o `.avi`? ¿Está corriendo `python src/main.py`? |
-| El video terminó en `Crudos/fallidos/` | Abrí `Logs/editor_gianni.log`: la línea con `ERROR` dice por qué. |
-| "la transcripción no devolvió ninguna palabra" | El audio está vacío o no se entiende. Revisá que el video tenga voz. |
-| Los subtítulos salen con una letra que no es la que quería | Cambiá `FUENTE_SUBTITULOS` por una fuente instalada. |
-| Corta demasiado / se siente "apurado" | Subí `DURACION_MINIMA_SILENCIO_MS` y/o `MARGEN_SILENCIO_MS`. |
-| Quedan silencios largos | Bajá `DURACION_MINIMA_SILENCIO_MS` o subí `MARGEN_DB_SOBRE_PISO`. |
-| Corta voz baja como si fuera silencio | Bajá `MARGEN_DB_SOBRE_PISO`. |
-| Se queda sin memoria | Usá `MODELO_WHISPER = "base"` y, en el servicio, `MemoryMax`. |
+| `'git' is not recognized as an internal or external command` (Windows) | Git isn't installed or the terminal wasn't restarted. Install it with `winget install Git.Git` (or from [git-scm.com](https://git-scm.com)) and open a new PowerShell window. |
+| `'python' is not recognized as an internal or external command` (Windows) | The **"Add python.exe to PATH"** box wasn't checked when installing Python. Reopen the downloaded Python installer, choose **Modify**, and check the option to add it to PATH. |
+| `ExecutionPolicy` error / "running scripts is disabled" (Windows) | In PowerShell run: `Set-ExecutionPolicy -Scope CurrentUser RemoteSigned` (confirm with `Y`) and activate again with `.\venv\Scripts\Activate.ps1`. |
+| `ffmpeg` / `ffprobe` "not found" or not recognized | They're not in the system `PATH`. On Windows: `winget install Gyan.FFmpeg` and restart PowerShell. On Linux: `sudo apt install ffmpeg`. On Mac: `brew install ffmpeg`. |
+| I drop a video and nothing happens | Is the video inside the `Crudos/` folder? Is the extension `.mp4`, `.mov`, `.mkv`, or `.avi`? Is `python src/main.py` running? |
+| The video ended up in `Crudos/fallidos/` | Open `Logs/editor_gianni.log`: the line with `ERROR` states why. |
+| "la transcripción no devolvió ninguna palabra" ("the transcription returned no words") | The audio is empty or unintelligible. Check that the video has speech in it. |
+| Subtitles come out in a font that isn't the one I wanted | Change `FUENTE_SUBTITULOS` to a font you have installed. |
+| Cuts too much / feels "rushed" | Raise `DURACION_MINIMA_SILENCIO_MS` and/or `MARGEN_SILENCIO_MS`. |
+| Long silences are left in | Lower `DURACION_MINIMA_SILENCIO_MS` or raise `MARGEN_DB_SOBRE_PISO`. |
+| Cuts soft speech as if it were silence | Lower `MARGEN_DB_SOBRE_PISO`. |
+| Runs out of memory | Use `MODELO_WHISPER = "base"` and, in the service, `MemoryMax`. |
 
-## Estructura del repositorio
+## Repository structure
 
 ```
 raw-to-reel/
 ├── .github/
 │   └── workflows/
-│       └── test-windows.yml     # CI automatizado en Windows Server
+│       └── test-windows.yml     # automated CI on Windows Server
 ├── src/
-│   ├── main.py                  # bucle principal + pipeline
-│   ├── config.py                # TODA la configuración ajustable
-│   ├── scanner.py               # elige y estabiliza el próximo video
+│   ├── main.py                  # main loop + pipeline
+│   ├── config.py                # ALL of the adjustable configuration
+│   ├── scanner.py                # picks and stabilizes the next video
 │   ├── transcription.py         # audio + faster-whisper
-│   ├── silence_detector.py      # silencios por volumen (umbral adaptativo)
-│   ├── repetition_detector.py   # muletillas y repeticiones
-│   ├── cut_manager.py           # cortes -> tramos + remapeo de tiempos
-│   ├── subtitle_generator.py    # captions + archivo .ass
-│   ├── video_processor.py       # ffmpeg: cortar, unir, quemar subtítulos
-│   ├── validator.py             # chequeos del resultado
-│   ├── file_manager.py          # entrega segura a Listos/
+│   ├── silence_detector.py      # silence by volume (adaptive threshold)
+│   ├── repetition_detector.py   # filler words and repetitions
+│   ├── cut_manager.py           # cuts -> segments + time remapping
+│   ├── subtitle_generator.py    # captions + .ass file
+│   ├── video_processor.py       # ffmpeg: cutting, joining, burning subtitles
+│   ├── validator.py             # checks on the result
+│   ├── file_manager.py          # safe delivery to Listos/
 │   └── logger.py                # log + estado.json
 ├── tests/
-│   └── test_core.py             # suite de pruebas unitarias y de integración
-├── ver_estado.py                # ver el progreso en vivo
+│   └── test_core.py             # unit and integration test suite
+├── ver_estado.py                # watch progress live
 ├── requirements.txt
 ├── LICENSE
 └── README.md
 ```
 
-Carpetas que se crean al usarlo (ignoradas por git): `Crudos/`, `Crudos/fallidos/`, `Listos/`, `Temp/`, `Logs/`.
+Folders created on use (ignored by git): `Crudos/`, `Crudos/fallidos/`, `Listos/`, `Temp/`, `Logs/`.
 
 ---
 
-## 🚧 Estado del proyecto: En desarrollo y maduración continua
+## 🚧 Project status: in active development and ongoing maturation
 
 > [!NOTE]
-> **RawToReel es un proyecto en desarrollo activo y proceso constante de maduración.**  
-> El motor ya es totalmente funcional, estable y se utiliza para procesar videos verticales reales. Al ser un software que evoluciona continuamente con el uso, **periódicamente se irán publicando actualizaciones** con mejoras de velocidad, afinación en la detección de pausas y muletillas, soporte de nuevos formatos y más opciones de estilo.
+> **RawToReel is a project in active development and constant maturation.**
+> The engine is already fully functional, stable, and used to process real vertical videos. Since it's software that keeps evolving with use, **updates will be published periodically** with speed improvements, finer-tuned pause/filler detection, support for new formats, and more style options.
 
-### Cómo actualizar a la última versión
+### How to update to the latest version
 
-Para actualizar tu copia local a la versión más reciente en cualquier momento:
+To update your local copy to the latest version at any time:
 
 ```bash
 git pull origin master
 pip install -r requirements.txt --upgrade
 ```
 
-### Feedback y sugerencias
+### Feedback and suggestions
 
-Al estar en pleno crecimiento, **el feedback y los reportes de la comunidad son clave**:
-* Si encontrás un corte que no quedó como esperabas o una palabra que se comportó de forma extraña, abrí un [**Issue**](https://github.com/Draggypy/raw-to-reel/issues) en GitHub incluyendo el fragmento relevante de `Logs/editor_gianni.log`.
-* ¡Las sugerencias, ideas y Pull Requests son muy bienvenidas para seguir madurando el proyecto!
+Since it's still growing, **community feedback and reports are key**:
+* If you find a cut that didn't come out as expected, or a word that behaved strangely, open an [**Issue**](https://github.com/Draggypy/raw-to-reel/issues) on GitHub including the relevant excerpt from `Logs/editor_gianni.log`.
+* Suggestions, ideas, and Pull Requests are very welcome to keep maturing the project!
 
 ---
 
-## Licencia
+## License
 
-MIT — ver [`LICENSE`](LICENSE).
+MIT — see [`LICENSE`](LICENSE).

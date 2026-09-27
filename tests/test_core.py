@@ -282,6 +282,22 @@ class TestFilterPathWindowsCompat(unittest.TestCase):
         self.assertIn("C\\:", escaped_text)
 
 
+class TestConcatListEscaping(unittest.TestCase):
+
+    def test_apostrophe_in_filename_does_not_break_concat_list(self):
+        # Real bug found 2026-09-26: a video named with an apostrophe (a
+        # completely ordinary filename, e.g. "gianni's_video.mp4") broke
+        # the concat demuxer's file list -- the unescaped quote ended the
+        # path early and ffmpeg tried to open a mangled path.
+        escaped = video_processor._escape_path_for_concat_list(Path("/tmp/gianni's_video_seg0.mp4"))
+        self.assertNotIn("''", escaped.replace("'\\''", ""))  # no bare unescaped quote left
+        self.assertIn("'\\''", escaped)
+
+    def test_path_without_apostrophe_is_unchanged(self):
+        p = Path("/tmp/plain_video_seg0.mp4")
+        self.assertEqual(video_processor._escape_path_for_concat_list(p), str(p))
+
+
 class TestRealFFmpegPipeline(unittest.TestCase):
 
     def test_synthetic_cut_and_subtitle(self):

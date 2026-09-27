@@ -62,11 +62,24 @@ def _cut_one_segment(video: Path, segment: Segment, destination: Path) -> None:
         raise RuntimeError(f"ffmpeg failed cutting a segment: {result.stderr.strip()}")
 
 
+def _escape_path_for_concat_list(path: Path) -> str:
+    """Escapes a path for the concat demuxer's own quoted-string syntax
+    (single quotes around the path). A literal single quote in the path
+    has to be closed, escaped, and reopened (`'\\''`) -- otherwise it ends
+    the quoted path early and corrupts every line after it.
+
+    Found 2026-09-26: a video named with an apostrophe (e.g.
+    "gianni's_video.mp4", a completely ordinary filename) broke the
+    concat step. ffmpeg tried to open a mangled path with the apostrophe
+    silently missing, and the video went to failed/ with a cryptic error."""
+    return str(path).replace("'", "'\\''")
+
+
 def _concatenate(segment_files: List[Path], destination: Path) -> None:
     """Joins the already-cut files with the concat demuxer -- stream copy,
     no re-encoding, practically free in time and memory."""
     list_path = destination.with_suffix(".txt")
-    content = "\n".join(f"file '{s.resolve()}'" for s in segment_files)
+    content = "\n".join(f"file '{_escape_path_for_concat_list(s.resolve())}'" for s in segment_files)
     list_path.write_text(content, encoding="utf-8")
 
     command = [

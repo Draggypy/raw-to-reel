@@ -30,6 +30,7 @@ import validator
 import video_processor
 import file_manager
 import main
+import scanner
 
 
 def _ffmpeg(*args):
@@ -515,6 +516,55 @@ class TestOpenFolder(unittest.TestCase):
 
     def test_never_raises_when_the_launcher_does_not_exist(self):
         main._open_folder(Path("/this/path/does/not/matter"))  # must not raise
+
+
+class TestFinalize(unittest.TestCase):
+
+    def test_original_is_preserved_in_processed_not_deleted(self):
+        # Real requirement (2026-09-27): never delete the user's original,
+        # even after a successful edit -- only move it somewhere the
+        # scanner won't pick it back up and reprocess forever.
+        with tempfile.TemporaryDirectory() as tmpdir:
+            original_ready, original_processed = config.READY, config.PROCESSED
+            tmppath = Path(tmpdir)
+            config.READY = tmppath / "Ready"
+            config.PROCESSED = tmppath / "Raw" / "processed"
+            try:
+                original = tmppath / "clip.mp4"
+                original.write_bytes(b"original bytes")
+                temp_path = tmppath / "clip_edited.mp4"
+                temp_path.write_bytes(b"edited bytes")
+
+                ok = file_manager.finalize(temp_path, original)
+
+                self.assertTrue(ok)
+                self.assertFalse(original.exists(), "should be moved out of Raw/, not left there")
+                self.assertTrue(
+                    (config.PROCESSED / "clip.mp4").exists(), "original must survive in Raw/processed/"
+                )
+                self.assertEqual((config.PROCESSED / "clip.mp4").read_bytes(), b"original bytes")
+                self.assertEqual((config.READY / "clip.mp4").read_bytes(), b"edited bytes")
+                self.assertFalse(temp_path.exists())
+            finally:
+                config.READY, config.PROCESSED = original_ready, original_processed
+
+    def test_processed_original_would_not_be_rescanned(self):
+        # Guards the reason PROCESSED is a subfolder of Raw/ instead of
+        # just leaving the file in Raw/ itself: list_pending_videos only
+        # looks at files directly inside Raw/, so anything moved into a
+        # subfolder is naturally out of the scan loop, with no extra
+        # bookkeeping needed.
+        with tempfile.TemporaryDirectory() as tmpdir:
+            original_raw = config.RAW
+            config.RAW = Path(tmpdir)
+            try:
+                (config.RAW / "processed").mkdir()
+                (config.RAW / "processed" / "already_done.mp4").write_bytes(b"x")
+                (config.RAW / "new_video.mp4").write_bytes(b"x")
+                pending = scanner.list_pending_videos()
+                self.assertEqual([p.name for p in pending], ["new_video.mp4"])
+            finally:
+                config.RAW = original_raw
 
 
 class TestFailureReason(unittest.TestCase):

@@ -10,6 +10,14 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent.parent
 RAW = ROOT / "Raw"
 FAILED = RAW / "failed"
+# Where a SUCCESSFULLY processed original goes after its edited copy is
+# verified in Ready/. Never deleted, on purpose: if the result isn't what
+# you wanted, move it back into Raw/ and it processes again -- the exact
+# same recovery path as Raw/failed/. It's a subfolder of Raw/ rather than
+# staying in Raw/ itself so the scanner doesn't pick it back up and loop
+# on it forever (scanner.list_pending_videos only looks at files directly
+# inside Raw/, never inside its subfolders).
+PROCESSED = RAW / "processed"
 READY = ROOT / "Ready"
 TEMP = ROOT / "Temp"
 LOGS = ROOT / "Logs"
@@ -28,6 +36,13 @@ STABILITY_WAIT_SEC = 2   # seconds to wait between stability checks
 # -- e.g. running as a headless systemd service on a server, or over SSH).
 # Turn this off for that kind of unattended setup.
 OPEN_RAW_FOLDER_ON_START = True
+# Opens Ready/ once processing catches up and there's nothing left in
+# Raw/ -- so the moment your batch of videos is done, the finished files
+# are right there without you having to go look. Opens once per batch
+# (when the queue drains to empty), not after every single video, so
+# dropping in 5 videos doesn't pop 5 windows. Same silent-no-op-without-a-
+# desktop behavior as OPEN_RAW_FOLDER_ON_START.
+OPEN_READY_FOLDER_ON_DONE = True
 
 # --- Whisper (transcription) ---
 WHISPER_MODEL = "small"       # "base" as a fallback if RAM usage needs to come down

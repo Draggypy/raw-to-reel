@@ -222,11 +222,13 @@ When it starts, it prints a short welcome banner and **opens the `Raw/` folder f
 2. The program detects it on its own. It waits until the copy is finished (it watches for the file size to stop changing), so you can transfer files from your phone or a USB drive with no issues.
 3. It processes it — the same terminal prints each stage live as it happens.
 4. When it's done, the terminal prints `Done: my-video.mp4 -> ready in Ready/`, and the file appears there **with the same name**.
-5. The original disappears from `Raw/` **only once the copy in `Ready/` has been verified.**
+5. The original moves from `Raw/` into `Raw/processed/` **only once the copy in `Ready/` has been verified** -- it's never deleted, so you can always go back to it.
 
 The program stays running, watching `Raw/`. It processes **one video at a time**, oldest to newest. To stop it: `Ctrl+C` (it finishes the video currently being processed, then exits).
 
-> **Running it as an unattended service** (systemd, a headless server, over SSH — see below)? There's no desktop to pop a folder open on. Set `OPEN_RAW_FOLDER_ON_START = False` in `src/config.py`; it's harmless to leave on either way; it just silently does nothing without a desktop environment.
+It also **opens `Ready/` for you** once your batch finishes (the queue drains to empty) — one popup per batch, not per video, so dropping in five videos doesn't open five windows.
+
+> **Running it as an unattended service** (systemd, a headless server, over SSH — see below)? There's no desktop to pop a folder open on. Set `OPEN_RAW_FOLDER_ON_START = False` and `OPEN_READY_FOLDER_ON_DONE = False` in `src/config.py`; it's harmless to leave them on either way, they just silently do nothing without a desktop environment.
 
 ### Watching what it's doing
 
@@ -280,7 +282,8 @@ systemctl --user status raw-to-reel.service
 
 ## What happens to your files
 
-- **The original is never touched until the end.** A temporary copy is processed in `Temp/`. Only once the finished copy is in `Ready/` and its size matches the temporary file is the original deleted from `Raw/`.
+- **The original is never touched until the end, and never deleted.** A temporary copy is processed in `Temp/`. Only once the finished copy is in `Ready/` and its size matches the temporary file does the original move from `Raw/` into `Raw/processed/`.
+- **Didn't like the result?** Move the file from `Raw/processed/` back into `Raw/` and it gets edited again from scratch -- the exact same recovery path as a failed video in `Raw/failed/`.
 - **If something fails** (empty transcription, an `ffmpeg` error, a failed validation) the original is moved to `Raw/failed/` so it isn't retried in a loop, and **the reason is written right next to it** as `your-video.mp4.error.txt`. The full history is also in `Logs/rawtoreel.log`.
 - **To retry** a failed video: move it back into `Raw/`.
 - Everything under `Raw/`, `Ready/`, `Temp/`, and `Logs/` is in `.gitignore`: your videos never end up in the repository.
@@ -476,7 +479,7 @@ raw-to-reel/
 └── README.md
 ```
 
-Folders created on use (ignored by git): `Raw/`, `Raw/failed/`, `Ready/`, `Temp/`, `Logs/`.
+Folders created on use (ignored by git): `Raw/`, `Raw/failed/`, `Raw/processed/`, `Ready/`, `Temp/`, `Logs/`.
 
 ---
 

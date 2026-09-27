@@ -12,6 +12,9 @@ Raw/*
 !Raw/failed/
 Raw/failed/*
 !Raw/failed/.gitkeep
+!Raw/processed/
+Raw/processed/*
+!Raw/processed/.gitkeep
 
 Ready/*
 !Ready/.gitkeep

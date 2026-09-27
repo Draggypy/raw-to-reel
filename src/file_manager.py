@@ -1,6 +1,8 @@
 """Safe choreography of delivering a finished video to Ready/ and only
-then deleting the original from Raw/. The original is never touched until
-the final copy has been independently verified.
+then moving the original out of Raw/'s scan path. The original is never
+touched until the final copy has been independently verified, and it's
+never deleted -- only moved to Raw/processed/, so a result you don't like
+can always be recovered and reprocessed (see config.PROCESSED).
 """
 
 import shutil
@@ -16,9 +18,10 @@ def _valid_copy(temp_path: Path, destination: Path) -> bool:
 
 
 def finalize(temp_path: Path, original: Path) -> bool:
-    """Copies temp_path -> Ready/, verifies the copy, and only then
-    deletes the original from Raw/ and the temp file. If anything fails
-    along the way, the original stays intact."""
+    """Copies temp_path -> Ready/, verifies the copy, and only then moves
+    the original into Raw/processed/ (never deletes it) along with the
+    temp file. If anything fails along the way, the original stays right
+    where it was, untouched, in Raw/."""
     config.READY.mkdir(parents=True, exist_ok=True)
     destination = config.READY / original.name
 
@@ -29,14 +32,15 @@ def finalize(temp_path: Path, original: Path) -> bool:
         return False
 
     if not _valid_copy(temp_path, destination):
-        logger.log("ERROR: the copy in Ready/ doesn't match the temp file, not deleting the original")
+        logger.log("ERROR: the copy in Ready/ doesn't match the temp file, leaving the original in place")
         destination.unlink(missing_ok=True)
         return False
 
+    config.PROCESSED.mkdir(parents=True, exist_ok=True)
     try:
-        original.unlink()
+        shutil.move(str(original), str(config.PROCESSED / original.name))
     except OSError as e:
-        logger.log(f"ERROR deleting original from Raw/ (the copy in Ready/ is already OK): {e}")
+        logger.log(f"ERROR moving original to Raw/processed/ (the copy in Ready/ is already OK): {e}")
         return False
 
     try:

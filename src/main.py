@@ -199,16 +199,21 @@ def main() -> None:
         _open_folder(config.RAW)
 
     logger.log("RawToReel starting")
+    did_work_since_last_open = False
 
     while _keep_running:
         video = scanner.next_video()
 
         if video is None:
+            if did_work_since_last_open and config.OPEN_READY_FOLDER_ON_DONE:
+                _open_folder(config.READY)
+                did_work_since_last_open = False
             logger.update_status(None, "waiting")
             time.sleep(config.SCAN_INTERVAL_SEC)
             continue
 
         failure_reason = process_video(video)
+        did_work_since_last_open = True
         if failure_reason is not None:
             file_manager.mark_failed(video, failure_reason)
 

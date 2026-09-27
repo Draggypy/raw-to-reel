@@ -200,7 +200,10 @@ def consolidate(cuts: List[Cut], total_duration: float, words: List[Word]) -> Li
 
 
 def remap_interval(
-    start: float, end: float, segments: List[Segment]
+    start: float,
+    end: float,
+    segments: List[Segment],
+    real_durations: Optional[Sequence[float]] = None,
 ) -> Optional[Tuple[float, float]]:
     """Translates an [start, end) interval from the ORIGINAL timeline
     (e.g. a Whisper word) onto the already-cut timeline.
@@ -213,24 +216,31 @@ def remap_interval(
     milliseconds. Here it finds the segment with the most overlap with the
     interval and trims to that segment. It only returns None if the
     interval doesn't overlap ANY kept segment -- only then is there really
-    nothing to show."""
+    nothing to show.
+
+    `real_durations` are the measured durations of the cut segment files
+    (see video_processor.cut_segments). When given, each segment's offset
+    in the output accumulates those instead of the requested durations:
+    every cut comes out a few ms longer than requested, and over dozens
+    of cuts that drift pushed subtitles out of sync with the audio."""
     accumulated = 0.0
-    best: Optional[Tuple[float, Segment, float]] = None
-    for s in segments:
+    best: Optional[Tuple[float, Segment, float, float]] = None
+    for i, s in enumerate(segments):
+        output_duration = real_durations[i] if real_durations is not None else s.duration
         overlap_start = max(start, s.start)
         overlap_end = min(end, s.end)
         overlap = overlap_end - overlap_start
         if overlap > 0 and (best is None or overlap > best[0]):
-            best = (overlap, s, accumulated)
-        accumulated += s.duration
+            best = (overlap, s, accumulated, output_duration)
+        accumulated += output_duration
 
     if best is None:
         return None
 
-    _, segment, offset = best
+    _, segment, offset, output_duration = best
     trimmed_start = max(start, segment.start)
     trimmed_end = min(end, segment.end)
     return (
-        offset + (trimmed_start - segment.start),
-        offset + (trimmed_end - segment.start),
+        offset + min(trimmed_start - segment.start, output_duration),
+        offset + min(trimmed_end - segment.start, output_duration),
     )

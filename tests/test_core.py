@@ -26,7 +26,22 @@ from transcription import Word
 import subtitle_generator
 from subtitle_generator import Caption
 import transcription
+import validator
 import video_processor
+import file_manager
+
+
+def _ffmpeg(*args):
+    return subprocess.run(["ffmpeg", "-y", "-hide_banner", "-loglevel", "error", *args],
+                          capture_output=True, text=True)
+
+
+def _probe_video(path):
+    r = subprocess.run(["ffprobe", "-v", "error", "-select_streams", "v:0",
+                        "-show_entries", "stream=width,height,pix_fmt", "-of", "csv=p=0", str(path)],
+                       capture_output=True, text=True)
+    width, height, pix_fmt = r.stdout.strip().rstrip(",").split(",")[:3]
+    return int(width), int(height), pix_fmt
 
 MARGIN = config.SILENCE_MARGIN_MS / 1000
 MIDSENTENCE_MARGIN = config.MIDSENTENCE_MARGIN_MS / 1000
@@ -133,6 +148,15 @@ class TestCutManager(unittest.TestCase):
         # A word in [2.5, 3.5] (removed zone)
         remapped_empty = cut_manager.remap_interval(2.5, 3.5, segments)
         self.assertIsNone(remapped_empty)
+
+    def test_remap_interval_uses_real_segment_durations(self):
+        # Every cut file comes out a few ms longer than requested; the
+        # concat demuxer offsets the next file by the REAL duration, so
+        # subtitles have to as well or they drift out of sync.
+        segments = [Segment(start=0.0, end=2.0), Segment(start=4.0, end=7.0)]
+        remapped = cut_manager.remap_interval(4.5, 5.5, segments, real_durations=[2.04, 3.02])
+        self.assertAlmostEqual(remapped[0], 2.04 + 0.5)
+        self.assertAlmostEqual(remapped[1], 2.04 + 1.5)
 
 
 def _synthetic_db(*segments):
@@ -308,30 +332,113 @@ class TestRealFFmpegPipeline(unittest.TestCase):
             output_video = tmppath / "output.mp4"
             ass_path = tmppath / "test.ass"
 
-            # 1. Create a synthetic video with ffmpeg (2 seconds with audio)
-            gen_cmd = [
-                "ffmpeg", "-y", "-hide_banner", "-loglevel", "error",
-                "-f", "lavfi", "-i", "testsrc=duration=2:size=320x240:rate=25",
-                "-f", "lavfi", "-i", "sine=frequency=1000:duration=2",
-                "-c:v", "libx264", "-c:a", "aac",
-                str(source_video)
-            ]
-            gen_result = subprocess.run(gen_cmd, capture_output=True, text=True)
-            self.assertEqual(gen_result.returncode, 0, f"Error generating synthetic video: {gen_result.stderr}")
+            gen = _ffmpeg("-f", "lavfi", "-i", "testsrc=duration=2:size=320x240:rate=25",
+                          "-f", "lavfi", "-i", "sine=frequency=1000:duration=2",
+                          "-c:v", "libx264", "-c:a", "aac", str(source_video))
+            self.assertEqual(gen.returncode, 0, f"Error generating synthetic video: {gen.stderr}")
 
-            # 2. Generate a basic .ass file
-            captions = [
-                Caption(text="Subtitle test", start=0.2, end=1.2)
-            ]
-            subtitle_generator.generate_ass(captions, 320, 240, ass_path)
+            subtitle_generator.generate_ass([Caption(text="Subtitle test", start=0.2, end=1.2)], 320, 240, ass_path)
             self.assertTrue(ass_path.exists())
 
-            # 3. Cut segment [0.0 - 1.5] and burn the subtitle
             segments = [Segment(start=0.0, end=1.5)]
-            video_processor.cut_and_add_subtitles(source_video, segments, ass_path, output_video)
+            cut_files = video_processor.cut_segments(source_video, segments, output_video)
+            try:
+                video_processor.join_and_burn_subtitles([f for f, _ in cut_files], ass_path, output_video)
+            finally:
+                video_processor.remove_files(f for f, _ in cut_files)
 
             self.assertTrue(output_video.exists(), "The output video was not created")
             self.assertGreater(output_video.stat().st_size, 1000, "The output video is empty or corrupted")
+            self.assertTrue(all(not f.exists() for f, _ in cut_files), "Intermediate segment files were left behind")
+
+
+class TestHorizontalAndPhoneFormats(unittest.TestCase):
+
+    def test_many_cuts_at_25fps_pass_validation(self):
+        # Real bug (2026-09-27): at 25fps each cut comes out ~23ms longer
+        # than requested, and the validator allowed 20ms per cut -- any
+        # 25fps video with ~47+ cuts (a few minutes of horizontal footage)
+        # was rejected into failed/ even though nothing was wrong.
+        with tempfile.TemporaryDirectory() as tmpdir:
+            tmppath = Path(tmpdir)
+            source = tmppath / "h25.mp4"
+            gen = _ffmpeg("-f", "lavfi", "-i", "testsrc=duration=70:size=160x90:rate=25",
+                          "-f", "lavfi", "-i", "anoisesrc=d=70:a=0.1",
+                          "-c:v", "libx264", "-preset", "ultrafast", "-pix_fmt", "yuv420p",
+                          "-c:a", "aac", str(source))
+            self.assertEqual(gen.returncode, 0, gen.stderr)
+
+            segments = [Segment(start=i * 1.1, end=i * 1.1 + 0.9) for i in range(60)]
+            output = tmppath / "out.mp4"
+            ass_path = tmppath / "empty.ass"
+            subtitle_generator.generate_ass([], 160, 90, ass_path)
+            cut_files = video_processor.cut_segments(source, segments, output)
+            try:
+                video_processor.join_and_burn_subtitles([f for f, _ in cut_files], ass_path, output)
+            finally:
+                video_processor.remove_files(f for f, _ in cut_files)
+
+            result = validator.validate(output, sum(d for _, d in cut_files), len(segments))
+            self.assertTrue(result.ok, result.reason)
+
+    def test_rotated_phone_video_reports_display_dimensions(self):
+        # Phones store vertical video as a landscape frame + "rotate 90";
+        # ffmpeg outputs it upright, so subtitles need the upright size.
+        with tempfile.TemporaryDirectory() as tmpdir:
+            tmppath = Path(tmpdir)
+            stored = tmppath / "stored.mp4"
+            rotated = tmppath / "rotated.mp4"
+            gen = _ffmpeg("-f", "lavfi", "-i", "testsrc=duration=1:size=320x180:rate=25",
+                          "-c:v", "libx264", "-pix_fmt", "yuv420p", str(stored))
+            self.assertEqual(gen.returncode, 0, gen.stderr)
+            tag = _ffmpeg("-display_rotation", "90", "-i", str(stored), "-c", "copy", str(rotated))
+            if tag.returncode != 0:
+                self.skipTest("this ffmpeg build can't write rotation metadata (-display_rotation needs ffmpeg 6+)")
+            self.assertEqual(subtitle_generator.get_dimensions(rotated), (180, 320))
+
+    def test_10bit_odd_sized_source_comes_out_playable(self):
+        # 10-bit HDR phone footage and odd-sized screen recordings used to
+        # produce High 10 / High 4:4:4 H.264 that most players can't open.
+        with tempfile.TemporaryDirectory() as tmpdir:
+            tmppath = Path(tmpdir)
+            source = tmppath / "odd10.mp4"
+            gen = _ffmpeg("-f", "lavfi", "-i", "testsrc=duration=2:size=321x181:rate=30",
+                          "-f", "lavfi", "-i", "sine=frequency=440:duration=2",
+                          "-c:v", "libx264", "-pix_fmt", "yuv444p10le", "-c:a", "aac", str(source))
+            if gen.returncode != 0:
+                self.skipTest("this ffmpeg build's libx264 can't encode 10-bit 4:4:4 sources")
+            cut_files = video_processor.cut_segments(source, [Segment(0.0, 1.5)], tmppath / "out.mp4")
+            try:
+                width, height, pix_fmt = _probe_video(cut_files[0][0])
+            finally:
+                video_processor.remove_files(f for f, _ in cut_files)
+            self.assertEqual(pix_fmt, "yuv420p")
+            self.assertEqual((width % 2, height % 2), (0, 0))
+            self.assertEqual(subtitle_generator.get_dimensions(source), (width, height))
+
+    def test_horizontal_subtitles_use_the_horizontal_bottom_margin(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            ass = Path(tmpdir) / "h.ass"
+            subtitle_generator.generate_ass([Caption("hi", 0.0, 1.0)], 1920, 1080, ass)
+            expected = round(1080 * config.HORIZONTAL_BOTTOM_MARGIN_FRACTION)
+            self.assertIn(f",{expected},1\n", ass.read_text(encoding="utf-8"))
+
+
+class TestFailureReason(unittest.TestCase):
+
+    def test_failed_video_gets_an_error_txt_with_the_reason(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            original_failed = config.FAILED
+            config.FAILED = Path(tmpdir) / "failed"
+            try:
+                video = Path(tmpdir) / "clip.mp4"
+                video.write_bytes(b"x")
+                file_manager.mark_failed(video, "the transcription returned no words")
+                sidecar = config.FAILED / "clip.mp4.error.txt"
+                self.assertTrue((config.FAILED / "clip.mp4").exists())
+                self.assertIn("the transcription returned no words", sidecar.read_text(encoding="utf-8"))
+            finally:
+                config.FAILED = original_failed
 
 
 class TestUsableAudio(unittest.TestCase):

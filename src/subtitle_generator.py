@@ -5,17 +5,22 @@ video (see remap_words) -- it doesn't need to know which is which, it just
 receives a list of Word with whatever timestamps they have.
 """
 
+import json
 import subprocess
 from dataclasses import dataclass
 from pathlib import Path
-from typing import List, Tuple
+from typing import List, Optional, Sequence, Tuple
 
 import config
 import cut_manager
 from transcription import Word
 
 
-def remap_words(words: List[Word], segments: List["cut_manager.Segment"]) -> List[Word]:
+def remap_words(
+    words: List[Word],
+    segments: List["cut_manager.Segment"],
+    real_durations: Optional[Sequence[float]] = None,
+) -> List[Word]:
     """Translates each word onto the output timeline against the
     already-cut segments (see cut_manager.remap_interval). A word that
     doesn't overlap ANY kept segment is dropped -- there's no point
@@ -24,7 +29,7 @@ def remap_words(words: List[Word], segments: List["cut_manager.Segment"]) -> Lis
     the segment instead of being dropped entirely."""
     remapped = []
     for w in words:
-        interval = cut_manager.remap_interval(w.start, w.end, segments)
+        interval = cut_manager.remap_interval(w.start, w.end, segments, real_durations)
         if interval is None:
             continue
         new_start, new_end = interval
@@ -69,21 +74,40 @@ def _close_group(group: List[Word]) -> Caption:
 
 
 def get_dimensions(video: Path) -> Tuple[int, int]:
+    """Width and height of the video AS IT WILL BE RENDERED: rotation
+    metadata applied and trimmed to even numbers, exactly like
+    video_processor._cut_one_segment produces it.
+
+    Phones often store a vertical video as a 1920x1080 frame plus a
+    "rotate 90" tag. ffmpeg auto-rotates it when cutting (the output is
+    1080x1920), but ffprobe reports the stored 1920x1080. Using those raw
+    numbers gave the subtitles the wrong canvas: libass stretched them to
+    fit a frame of the opposite orientation.
+
+    Parsed as JSON instead of CSV: CSV output mixes in side-data fields
+    whose layout changes between ffmpeg versions."""
     command = [
         "ffprobe", "-v", "error", "-select_streams", "v:0",
-        "-show_entries", "stream=width,height",
-        "-of", "csv=p=0",
+        "-show_entries", "stream=width,height:stream_side_data=rotation",
+        "-of", "json",
         str(video),
     ]
     result = subprocess.run(command, capture_output=True, text=True)
     if result.returncode != 0:
         raise RuntimeError(f"ffprobe failed getting dimensions: {result.stderr.strip()}")
 
-    # ffprobe adds an extra trailing comma when the video stream carries
-    # SIDE_DATA (e.g. rotation metadata, very common in phone HEVC) --
-    # only the first two values are taken, the rest is ignored.
-    values = result.stdout.strip().split(",")
-    return int(values[0]), int(values[1])
+    streams = json.loads(result.stdout or "{}").get("streams") or []
+    if not streams:
+        raise RuntimeError("ffprobe found no video stream to get dimensions from")
+    stream = streams[0]
+    width, height = int(stream["width"]), int(stream["height"])
+    rotation = 0
+    for side_data in stream.get("side_data_list") or []:
+        if "rotation" in side_data:
+            rotation = int(float(side_data["rotation"]))
+    if abs(rotation) % 180 == 90:
+        width, height = height, width
+    return width - width % 2, height - height % 2
 
 
 def _format_ass_time(seconds: float) -> str:
@@ -102,7 +126,10 @@ def _format_ass_time(seconds: float) -> str:
 def generate_ass(captions: List[Caption], width: int, height: int, destination: Path) -> None:
     font_size = round(height * config.FONT_SIZE_FRACTION)
     outline = round(height * config.OUTLINE_FRACTION)
-    bottom_margin = round(height * config.BOTTOM_MARGIN_FRACTION)
+    margin_fraction = (
+        config.HORIZONTAL_BOTTOM_MARGIN_FRACTION if width > height else config.BOTTOM_MARGIN_FRACTION
+    )
+    bottom_margin = round(height * margin_fraction)
 
     header = (
         "[Script Info]\n"

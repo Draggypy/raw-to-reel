@@ -4,7 +4,7 @@
 
 Drop a video of someone talking to camera into a folder. RawToReel cuts silences and filler words, adds word-by-word subtitles, and returns the edited video in another folder. On purpose, it **does not** cut repetitions ("look what happens here... but the opposite could happen... but this happens"): that's a common way of clarifying an idea while speaking, not a mistake. Everything runs on your own machine: no external APIs, no accounts, your video never gets uploaded anywhere.
 
-Built for vertical content like **Reels, TikTok, and Instagram Stories**.
+Works with **vertical** video (Reels, TikTok, Instagram Stories), **horizontal** video (YouTube, courses, podcasts), and square video — the orientation is detected automatically.
 
 <p align="center">
   <img src="assets/demo.gif" alt="RawToReel demo" width="320">
@@ -223,7 +223,7 @@ Shows the live stage of each video:
 [2026-09-24 12:33:40] (none) -> waiting
 ```
 
-The stages, in order: `extracting audio` → `transcribing` → `detecting silences` → `looking for filler words` → `consolidating cuts` → `generating subtitles` → `cutting and rendering` → `validating` → `moving to Ready`.
+The stages, in order: `extracting audio` → `transcribing` → `detecting silences` → `looking for filler words` → `consolidating cuts` → `cutting segments` → `generating subtitles` → `rendering` → `validating` → `moving to Ready`.
 
 The full history is kept in `Logs/rawtoreel.log` (one dated line per event, including how many silences, filler words, and segments it found for each video).
 
@@ -259,19 +259,24 @@ systemctl --user status raw-to-reel.service
 ## What happens to your files
 
 - **The original is never touched until the end.** A temporary copy is processed in `Temp/`. Only once the finished copy is in `Ready/` and its size matches the temporary file is the original deleted from `Raw/`.
-- **If something fails** (empty transcription, an `ffmpeg` error, a failed validation) the original is moved to `Raw/failed/` so it isn't retried in a loop. The cause is recorded in `Logs/rawtoreel.log`.
+- **If something fails** (empty transcription, an `ffmpeg` error, a failed validation) the original is moved to `Raw/failed/` so it isn't retried in a loop, and **the reason is written right next to it** as `your-video.mp4.error.txt`. The full history is also in `Logs/rawtoreel.log`.
 - **To retry** a failed video: move it back into `Raw/`.
 - Everything under `Raw/`, `Ready/`, `Temp/`, and `Logs/` is in `.gitignore`: your videos never end up in the repository.
+
+## Vertical, horizontal, and square video
+
+Any orientation works; nothing needs to be configured:
+
+- **Orientation is detected automatically**, including phone videos stored sideways with a rotation tag (very common: many phones save a vertical video as a landscape frame plus "rotate 90"). The output always comes out upright, and the subtitles are laid out for the upright frame.
+- **Subtitle placement adapts:** on vertical and square video they sit higher (`BOTTOM_MARGIN_FRACTION`, clear of the Instagram/TikTok UI); on horizontal video they sit near the bottom like regular subtitles (`HORIZONTAL_BOTTOM_MARGIN_FRACTION`).
+- **Any frame rate** (24, 25, 30, 60 fps, variable) and any length. Long videos with many cuts are validated against the real length of every cut, so they don't get falsely rejected.
+- **The output always plays everywhere:** 8-bit H.264 with 4:2:0 color and even dimensions, whatever the source was (10-bit HDR, 4:4:4 screen recordings, odd sizes like 1366×767 get trimmed by one pixel).
 
 ## Troubleshooting
 
 ### The video ended up in `Raw/failed/`
 
-Look for the line in the log — it states the exact reason, no need to guess:
-
-```bash
-grep -B 15 "Moved to failed" Logs/rawtoreel.log | tail -30
-```
+Open the `.error.txt` file sitting next to the video in `Raw/failed/` — it states the exact reason, no need to guess. (It's also in the log: `grep -B 15 "Moved to failed" Logs/rawtoreel.log | tail -30`.)
 
 The most common causes, from most to least frequent:
 
@@ -283,7 +288,7 @@ The most common causes, from most to least frequent:
 | `ffmpeg failed cutting a segment` / `ffmpeg failed concatenating` / `ffmpeg failed burning subtitles` | A specific `ffmpeg` step failed — the full message (in `Logs/rawtoreel.log`, never truncated) carries the actual `ffmpeg` error underneath. | Copy the full message from the log; it almost always states the concrete problem (unsupported codec, out of disk space, subtitle font not found). |
 | `VALIDATION ERROR: only weighs N bytes` | The final file came out empty or truncated — typically from running out of disk space mid-render. | Check free space in `Temp/` and `Ready/`. |
 | `VALIDATION ERROR: has no video/audio stream` | The final file lost a track somewhere in the process (rare; a sign of an incomplete `ffmpeg` build). | Reinstall `ffmpeg`, making sure it has `libass` and complete audio/video codecs (see Requirements). |
-| `VALIDATION ERROR: expected duration ...` | The final video's duration doesn't match the expected one beyond the tolerance margin. Can happen with video recorded at a **variable frame rate** (common on some phones) on very long takes or with a huge number of cuts. | If it's occasional, there's nothing to do: it's safer to reject the video than to deliver one with desync. If it happens every time with the same phone, let us know — there's room to adjust `DURATION_TOLERANCE_PER_SEGMENT_SEC`. |
+| `VALIDATION ERROR: expected duration ...` | Joining the cut segments lost or added content: the final video's length doesn't match the sum of the segments that were actually cut. This should be very rare. (Before 2026-09-27 this also fired falsely on long 24/25 fps videos — typical horizontal footage — because it compared against the *requested* lengths; that's fixed.) | Update to the latest version (`git pull`). If it still happens, report it with the `.error.txt` and the log. |
 | `VALIDATION ERROR: errors decoding` | The final file ended up corrupted somehow (rare — would be an actual bug). | Save the video from `Temp/` (it gets deleted on retry) and report it with the full log. |
 
 ### The video DID make it to `Ready/`, but something looks or sounds off
@@ -293,7 +298,7 @@ The automatic validation doesn't catch this because the file is technically vali
 | Symptom | Likely cause | Where to adjust |
 |---|---|---|
 | No subtitles show up, or they look like an ugly/generic font | The font set in `SUBTITLE_FONT` isn't installed on your system; `ffmpeg`/`libass` silently falls back to a default font (not an error). | Install the font you want to use and put its exact name in `SUBTITLE_FONT` (see the licensing note in the Subtitles table). |
-| Subtitles are out of sync with the audio | A sign of real audio/video desync in the result. | Check `Logs/rawtoreel.log` for that video and see how many segments it had — with a huge number of cuts the error margin accumulates (see `DURATION_TOLERANCE_*` in Configuration). |
+| Subtitles are out of sync with the audio | Subtitles are timed against the real length of every cut, so they shouldn't drift. (Before 2026-09-27 they drifted by ~20 ms per cut, which added up to over a second on long videos.) If you still see it, it's a real desync. | Update to the latest version (`git pull`). If it persists, report it with the log (`Cut duration: ... real (requested ...)` shows the numbers). |
 | Still cuts mid-thought, feels like "it cuts the moment I stop talking" | Fine-tuning of sensitivity, not a bug. | Raise `MIN_MIDSENTENCE_PAUSE_MS` and/or `SILENCE_MARGIN_MS` in `src/config.py`. |
 | Leaves very long silences uncut | The silence threshold is too strict for your background noise level. | Lower `DB_MARGIN_OVER_FLOOR` or carefully raise `DB_THRESHOLD_MAX` (see the comments in `config.py` — they're there so you don't break the balance). |
 | Cuts "um"/"like"/"this" ("este"/"tipo") that were actually part of a normal sentence | A filler-word false positive. | Remove that word from `FILLER_WORDS` (or from `AMBIGUOUS_FILLER_WORDS` if it already requires a pause) in `src/config.py`. |
@@ -337,7 +342,8 @@ Everything adjustable lives in a single file: [`src/config.py`](src/config.py). 
 | `SUBTITLE_FONT` | see note | **Font. Change it to one you have installed** (e.g. `"Arial"` or `"DejaVu Sans"`). |
 | `MAX_WORDS_PER_CAPTION` | `1` | Words per subtitle (1 = word by word, Reels style). |
 | `FONT_SIZE_FRACTION` | `0.075` | Font size as a fraction of the video's height. |
-| `BOTTOM_MARGIN_FRACTION` | `0.20` | Distance from the bottom edge (keeps the Instagram UI area clear). |
+| `BOTTOM_MARGIN_FRACTION` | `0.20` | Distance from the bottom edge on **vertical/square** video (keeps the Instagram/TikTok UI area clear). |
+| `HORIZONTAL_BOTTOM_MARGIN_FRACTION` | `0.10` | Distance from the bottom edge on **horizontal** video. |
 | `SUBTITLE_VERTICAL_SCALE` / `SUBTITLE_TRACKING` | `125` / `-8` | Stretch the letters vertically and tighten letter spacing. |
 
 > **About the font:** the default value points to a commercial typeface that **is not distributed with this repository**. If you don't have it installed, the render falls back to the system's default font. For a consistent result, pick a font you own and put its name in `SUBTITLE_FONT`. If the font you use has its own license, respect it.
@@ -348,6 +354,7 @@ Everything adjustable lives in a single file: [`src/config.py`](src/config.py). 
 |---|---|---|
 | `SEGMENT_PRESET` / `SEGMENT_CRF` | `ultrafast` / `18` | Encoding of the intermediate segments (deleted once done). |
 | `FINAL_PRESET` / `FINAL_CRF` | `veryfast` / `21` | Encoding of the final video. **This defines the real quality of the file you publish.** For higher quality: preset `medium` and CRF `18` (slower). |
+| `OUTPUT_PIXEL_FORMAT` | `yuv420p` | Pixel format of every encode. 8-bit 4:2:0 is the only one that plays everywhere; don't change it unless you know your target supports more. |
 
 ---
 
@@ -386,7 +393,7 @@ Before delivering, `validator.py` runs these checks from cheapest to most expens
 
 1. The file exists and weighs more than 10 KB.
 2. `ffprobe` can open it and it has both a **video and an audio** stream.
-3. The **real duration matches the expected one** (the sum of the segments). The tolerance **scales with the number of segments** (`0.15 s + 0.02 s per segment`), because the frame-level rounding of each cut accumulates: a fixed tolerance used to fail on videos with many cuts even though nothing was actually wrong.
+3. The **final duration matches the sum of the real durations of the cut segments** (each one measured with `ffprobe` right after cutting). Every cut lands on a frame boundary and comes out a few milliseconds longer than requested (~23 ms at 25 fps, ~8 ms at 60 fps); comparing against the *real* lengths means that rounding can't pile up into a false failure, and the subtitles are timed against those same real lengths so they stay in sync. Tolerance: `0.15 s + 0.02 s per segment`.
 4. It decodes completely with `ffmpeg` **without a single error**.
 
 ---
@@ -398,6 +405,7 @@ Before delivering, `validator.py` runs these checks from cheapest to most expens
 - **Built for one person talking to camera.** It's not a general-purpose editor: no transitions, music, zoom, or B-roll.
 - **Subtitles and cuts are tuned to taste.** The defaults come from real-world use, but every voice and every microphone is different: try it with a short video and adjust `config.py`.
 - **Transcription can get things wrong**, on proper nouns, slang, or noisy audio, and those errors carry over into the subtitles. Review the result before publishing.
+- **HDR is converted to standard 8-bit video without tone mapping.** HDR phone footage (e.g. iPhone's default HDR mode) plays everywhere after editing, but its colors can look slightly washed out. For the best color, record in SDR or turn HDR off in the camera settings.
 - **Rendering is slow on CPU.** It depends heavily on the machine and the length of the video.
 
 ## Troubleshooting (setup)
@@ -409,7 +417,7 @@ Before delivering, `validator.py` runs these checks from cheapest to most expens
 | `ExecutionPolicy` error / "running scripts is disabled" (Windows) | In PowerShell run: `Set-ExecutionPolicy -Scope CurrentUser RemoteSigned` (confirm with `Y`) and activate again with `.\venv\Scripts\Activate.ps1`. |
 | `ffmpeg` / `ffprobe` "not found" or not recognized | They're not in the system `PATH`. On Windows: `winget install Gyan.FFmpeg` and restart PowerShell. On Linux: `sudo apt install ffmpeg`. On Mac: `brew install ffmpeg`. |
 | I drop a video and nothing happens | Is the video inside the `Raw/` folder? Is the extension `.mp4`, `.mov`, `.mkv`, or `.avi`? Is `python src/main.py` running? |
-| The video ended up in `Raw/failed/` | Open `Logs/rawtoreel.log`: the line with `ERROR` states why. |
+| The video ended up in `Raw/failed/` | Open the `.error.txt` next to it: it states why (also in `Logs/rawtoreel.log`). See [Troubleshooting](#troubleshooting) for what each reason means. |
 | "the transcription returned no words" | The audio is empty or unintelligible. Check that the video has speech in it. |
 | Subtitles come out in a font that isn't the one I wanted | Change `SUBTITLE_FONT` to a font you have installed. |
 | Cuts too much / feels "rushed" | Raise `MIN_SILENCE_DURATION_MS` and/or `SILENCE_MARGIN_MS`. |
@@ -453,7 +461,7 @@ Folders created on use (ignored by git): `Raw/`, `Raw/failed/`, `Ready/`, `Temp/
 
 > [!NOTE]
 > **RawToReel is a project in active development and constant maturation.**
-> The engine is already fully functional, stable, and used to process real vertical videos. Since it's software that keeps evolving with use, **updates will be published periodically** with speed improvements, finer-tuned pause/filler detection, support for new formats, and more style options.
+> The engine is already fully functional, stable, and used to process real vertical and horizontal videos. Since it's software that keeps evolving with use, **updates will be published periodically** with speed improvements, finer-tuned pause/filler detection, support for new formats, and more style options.
 
 ### How to update to the latest version
 

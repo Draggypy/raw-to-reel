@@ -50,3 +50,24 @@ changed.
 ## Pending
 
 Human quality review (subtitles, how the cut feels) — the mechanical validation passes, but nobody has closely listened to/watched the result yet.
+
+## Incident 2026-09-27: horizontal videos going to failed/
+
+User report: "lots of horizontal videos go to failed/". Reproduced with a
+5-minute horizontal 25fps video: `expected duration 285.43s, real 287.04s
+(tolerance 1.35s for 60 segments)`. Root cause: every cut comes out a few
+ms longer than requested (frame rounding + AAC framing) — measured ~23ms
+per cut at 25fps, ~21ms at 24fps, ~20ms at 30fps, ~8ms at 60fps — while the
+validator allowed 20ms per cut against the *requested* durations. Short
+30fps vertical Reels never hit it; longer 24/25fps horizontal footage did
+after ~47 cuts (25fps) / ~94 cuts (24fps). The same drift made subtitles
+fall out of sync by over a second at the end of long videos.
+
+Fix: `video_processor.cut_segments` measures each cut file's real duration;
+subtitles are remapped with those real durations and the validator compares
+against their sum. Also fixed in the same pass: rotation-tagged phone video
+got subtitles laid out for the wrong orientation (`get_dimensions` now
+applies rotation), 10-bit/4:4:4 sources produced unplayable High 10/High
+4:4:4 H.264 (output now forced to yuv420p with even dimensions), horizontal
+subtitles get their own bottom margin, and every failed video gets a
+`<name>.error.txt` next to it with the reason.

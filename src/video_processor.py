@@ -40,7 +40,16 @@ def _cut_one_segment(video: Path, segment: Segment, destination: Path) -> None:
     extra frames up to the requested timestamp.
 
     The audio carries a short fade-in and fade-out so the join with the
-    neighboring segment doesn't produce a "click" (see AUDIO_FADE_SEC)."""
+    neighboring segment doesn't produce a "click" (see AUDIO_FADE_SEC).
+
+    The output is always 8-bit 4:2:0 with even dimensions (see
+    OUTPUT_PIXEL_FORMAT). Without this, a 10-bit HDR phone video or a
+    4:4:4 screen recording produced a High 10 / High 4:4:4 H.264 file
+    that passed validation but doesn't play on most phones, browsers, or
+    social apps. yuv420p requires even width and height, so odd-sized
+    sources (common in screen recordings) are trimmed by at most one
+    pixel. ffmpeg's autorotation still applies before this filter, so a
+    phone video with rotation metadata comes out upright."""
     fade = min(config.AUDIO_FADE_SEC, segment.duration / 2)
     fade_out_start = max(0.0, segment.duration - fade)
     audio_filter = (
@@ -52,7 +61,9 @@ def _cut_one_segment(video: Path, segment: Segment, destination: Path) -> None:
         "-ss", f"{segment.start:.3f}",
         "-i", str(video),
         "-t", f"{segment.duration:.3f}",
+        "-vf", "scale=trunc(iw/2)*2:trunc(ih/2)*2",
         "-c:v", "libx264", "-preset", config.SEGMENT_PRESET, "-crf", str(config.SEGMENT_CRF),
+        "-pix_fmt", config.OUTPUT_PIXEL_FORMAT,
         "-af", audio_filter,
         "-c:a", "aac", "-b:a", "128k",
         str(destination),
@@ -118,6 +129,7 @@ def _burn_subtitles(video: Path, ass_path: Path, destination: Path) -> None:
         "-i", str(video),
         "-vf", f"ass={escaped_ass_path}",
         "-c:v", "libx264", "-preset", config.FINAL_PRESET, "-crf", str(config.FINAL_CRF),
+        "-pix_fmt", config.OUTPUT_PIXEL_FORMAT,
         "-c:a", "copy",
         str(destination),
     ]
@@ -126,46 +138,55 @@ def _burn_subtitles(video: Path, ass_path: Path, destination: Path) -> None:
         raise RuntimeError(f"ffmpeg failed burning subtitles: {result.stderr.strip()}")
 
 
-def cut_video(video: Path, segments: List[Segment], destination: Path) -> None:
-    """Writes to destination the video with only the kept segments,
-    concatenated in order, without burning subtitles (see
-    cut_and_add_subtitles for the real pipeline step)."""
+def cut_segments(video: Path, segments: List[Segment], destination: Path) -> List[Tuple[Path, float]]:
+    """Cuts every kept segment to its own file next to `destination` and
+    returns each file with its REAL duration, measured with ffprobe.
+
+    The real duration is what everything downstream has to use, not the
+    requested one. Every cut lands on a frame boundary and AAC pads the
+    audio to whole frames, so each file comes out slightly longer than
+    requested -- ~23ms on average at 25fps, ~21ms at 24fps, ~20ms at
+    30fps, ~8ms at 60fps (measured 2026-09-27). That small excess adds up
+    over dozens of cuts: on a 5-minute 25fps horizontal video with 79
+    cuts, the output was 1.87s longer than the sum of the requested
+    segments. Validating against the requested durations rejected those
+    perfectly good videos into failed/, and remapping subtitles against
+    them made the captions drift further out of sync the longer the video
+    ran. The concat demuxer offsets each file by exactly this measured
+    duration, so it's the one number that matches the final timeline.
+
+    On failure every partially written file is removed before raising."""
     if not segments:
         raise ValueError("No segments to keep -- can't generate an empty video")
 
     destination.parent.mkdir(parents=True, exist_ok=True)
-    segment_files = [destination.parent / f"{destination.stem}_seg{i}.mp4" for i in range(len(segments))]
-
+    files: List[Path] = []
     try:
-        for segment, seg_path in zip(segments, segment_files):
+        for i, segment in enumerate(segments):
+            seg_path = destination.parent / f"{destination.stem}_seg{i}.mp4"
+            files.append(seg_path)
             _cut_one_segment(video, segment, seg_path)
-        _concatenate(segment_files, destination)
-    finally:
-        for seg in segment_files:
-            seg.unlink(missing_ok=True)
+        return [(f, get_total_duration(f)) for f in files]
+    except Exception:
+        remove_files(files)
+        raise
 
 
-def cut_and_add_subtitles(video: Path, segments: List[Segment], ass_path: Path, destination: Path) -> None:
-    """Cuts to the kept segments and burns in the already-remapped
-    subtitles. Each segment is cut to its own file, they're concatenated
-    without re-encoding, and only then are subtitles burned in a single
-    final pass -- three simple steps instead of one giant filter."""
-    if not segments:
-        raise ValueError("No segments to keep -- can't generate an empty video")
-
-    destination.parent.mkdir(parents=True, exist_ok=True)
-    segment_files = [destination.parent / f"{destination.stem}_seg{i}.mp4" for i in range(len(segments))]
+def join_and_burn_subtitles(segment_files: List[Path], ass_path: Path, destination: Path) -> None:
+    """Concatenates the already-cut segment files without re-encoding and
+    burns the subtitles in a single final pass -- simple steps instead of
+    one giant filter (see the module docstring)."""
     concatenated = destination.parent / f"{destination.stem}_concat.mp4"
-
     try:
-        for segment, seg_path in zip(segments, segment_files):
-            _cut_one_segment(video, segment, seg_path)
         _concatenate(segment_files, concatenated)
         _burn_subtitles(concatenated, ass_path, destination)
     finally:
-        for seg in segment_files:
-            seg.unlink(missing_ok=True)
         concatenated.unlink(missing_ok=True)
+
+
+def remove_files(paths) -> None:
+    for path in paths:
+        Path(path).unlink(missing_ok=True)
 
 
 def get_total_duration(video: Path) -> float:

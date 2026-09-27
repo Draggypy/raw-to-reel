@@ -47,9 +47,11 @@ def finalize(temp_path: Path, original: Path) -> bool:
     return True
 
 
-def mark_failed(original: Path) -> None:
+def mark_failed(original: Path, reason: str) -> None:
     """Moves an original that failed processing to Raw/failed/, so it
-    isn't retried on just the next scan."""
+    isn't retried on just the next scan, and writes the reason right next
+    to it as <video name>.error.txt -- the user sees why it failed by
+    opening the folder, without digging through the log."""
     config.FAILED.mkdir(parents=True, exist_ok=True)
     destination = config.FAILED / original.name
     try:
@@ -57,3 +59,14 @@ def mark_failed(original: Path) -> None:
         logger.log(f"Moved to failed/: {original.name}")
     except OSError as e:
         logger.log(f"ERROR moving to failed/: {e}")
+        return
+
+    try:
+        (config.FAILED / f"{original.name}.error.txt").write_text(
+            f"{original.name} could not be processed.\n\nReason:\n{reason}\n\n"
+            "To retry, move the video back into Raw/. The full history is in "
+            "Logs/rawtoreel.log.\n",
+            encoding="utf-8",
+        )
+    except OSError as e:
+        logger.log(f"ERROR writing the failure reason next to {original.name}: {e}")

@@ -213,17 +213,29 @@ FINAL_CRF = 21
 # to the next is audible as a "click" that gives the cut away (2026-09-26).
 # 12ms is inaudible as a fade and enough for the join to sound continuous.
 AUDIO_FADE_SEC = 0.012
+# Output pixel format for every encode. 8-bit 4:2:0 is the only format
+# that plays everywhere (phones, browsers, Instagram, TikTok, WhatsApp).
+# Without forcing it, libx264 inherits the source format: a 10-bit HDR
+# phone video became High 10 H.264 and a 4:4:4 screen recording became
+# High 4:4:4 -- both pass validation but won't play on most devices.
+OUTPUT_PIXEL_FORMAT = "yuv420p"
 
 # --- Validation ---
 MIN_SIZE_BYTES = 10_000     # below this, it's discarded as empty/truncated
-# The frame-level rounding of every cut (-ss + re-encode, see
-# video_processor) accumulates with the number of segments: measured on a
-# real video with 36 segments, ~14ms of excess per segment. A fixed
-# tolerance used to fail by very little (0.51s vs 0.5s) on videos with many
-# cuts even though nothing was wrong with the video -- that's why it scales
-# with the number of segments instead of being a fixed number.
-DURATION_TOLERANCE_BASE_SEC = 0.15        # base margin, videos with few segments
-DURATION_TOLERANCE_PER_SEGMENT_SEC = 0.02  # extra margin per segment (generous: ~14ms measured)
+# The final video is compared against the sum of the REAL durations of
+# the cut segment files (measured with ffprobe, see
+# video_processor.cut_segments), not against the requested durations.
+# Frame rounding already happened inside those files, so the only thing
+# left to catch is the join/burn step losing or adding content -- a
+# segment is never shorter than MIN_SEGMENT_SEC, so a dropped segment
+# still blows well past this tolerance.
+# History: this used to compare against the requested durations with
+# 20ms of slack per segment. The real excess per cut is ~23ms at 25fps
+# and ~21ms at 24fps, so any 24/25fps video with enough cuts (~47 at
+# 25fps, typical of a few minutes of horizontal footage) was rejected
+# into failed/ even though nothing was wrong (2026-09-27).
+DURATION_TOLERANCE_BASE_SEC = 0.15        # base margin
+DURATION_TOLERANCE_PER_SEGMENT_SEC = 0.02  # extra margin per segment (join timestamp rounding)
 
 # --- Subtitles ---
 # Tiempos Headline (Klim Type Foundry), Regular weight -- confirmed
@@ -269,4 +281,8 @@ SUBTITLE_VERTICAL_SCALE = 125
 # subtitle_generator about why this is applied as a \fsp override instead
 # of the Style's Spacing field (libass ignores negative Spacing).
 SUBTITLE_TRACKING = -8
-BOTTOM_MARGIN_FRACTION = 0.20  # safe zone to avoid clashing with the Instagram UI
+BOTTOM_MARGIN_FRACTION = 0.20  # vertical/square video: safe zone to avoid clashing with the Instagram/TikTok UI
+# Horizontal video (wider than tall, e.g. YouTube) has no app UI covering
+# the bottom fifth of the frame, so 0.20 left the captions floating too
+# high. 0.10 is the usual placement for horizontal subtitles.
+HORIZONTAL_BOTTOM_MARGIN_FRACTION = 0.10

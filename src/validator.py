@@ -4,17 +4,17 @@ If any of them fails, the video is NOT approved and the original in Raw/
 is left untouched -- see file_manager.py.
 
 Note: that ffmpeg finished with exit code 0 is already guaranteed by
-video_processor.cut_video() (it raises an exception if not) -- if that
-fails, validate() is never even called with a file to check.
+video_processor.cut_segments() and join_and_burn_subtitles() (they raise
+an exception if not) -- if that fails, validate() is never even called
+with a file to check.
 """
 
 import subprocess
 from dataclasses import dataclass
 from pathlib import Path
-from typing import List, Optional
+from typing import Optional
 
 import config
-from cut_manager import Segment
 
 
 @dataclass
@@ -53,8 +53,7 @@ def _ffprobe_opens_with_streams(video: Path) -> ValidationResult:
     return ValidationResult(True)
 
 
-def _expected_duration(video: Path, segments: List[Segment]) -> ValidationResult:
-    expected_duration = sum(s.duration for s in segments)
+def _expected_duration(video: Path, expected_duration: float, segment_count: int) -> ValidationResult:
     command = [
         "ffprobe", "-v", "error", "-show_entries", "format=duration",
         "-of", "csv=p=0", str(video),
@@ -67,13 +66,13 @@ def _expected_duration(video: Path, segments: List[Segment]) -> ValidationResult
     difference = abs(real_duration - expected_duration)
     tolerance = (
         config.DURATION_TOLERANCE_BASE_SEC
-        + len(segments) * config.DURATION_TOLERANCE_PER_SEGMENT_SEC
+        + segment_count * config.DURATION_TOLERANCE_PER_SEGMENT_SEC
     )
     if difference > tolerance:
         return ValidationResult(
             False,
             f"expected duration {expected_duration:.2f}s, real is {real_duration:.2f}s "
-            f"(difference {difference:.2f}s, tolerance {tolerance:.2f}s for {len(segments)} segments)",
+            f"(difference {difference:.2f}s, tolerance {tolerance:.2f}s for {segment_count} segments)",
         )
     return ValidationResult(True)
 
@@ -86,14 +85,18 @@ def _decodes_without_errors(video: Path) -> ValidationResult:
     return ValidationResult(True)
 
 
-def validate(video: Path, segments: List[Segment]) -> ValidationResult:
+def validate(video: Path, expected_duration: float, segment_count: int) -> ValidationResult:
     """Runs every check, from cheapest to most expensive, and stops at the
     first one that fails. Only if all of them pass can it be moved to
-    Ready/."""
+    Ready/.
+
+    `expected_duration` is the sum of the REAL durations of the cut
+    segment files (see video_processor.cut_segments), not of the requested
+    segments -- see DURATION_TOLERANCE_BASE_SEC for why."""
     checks = [
         lambda: _exists_and_has_size(video),
         lambda: _ffprobe_opens_with_streams(video),
-        lambda: _expected_duration(video, segments),
+        lambda: _expected_duration(video, expected_duration, segment_count),
         lambda: _decodes_without_errors(video),
     ]
     for check in checks:

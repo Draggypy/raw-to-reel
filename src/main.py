@@ -13,6 +13,8 @@ Ready/ and delete the original from Raw/.
 """
 
 import signal
+import subprocess
+import sys
 import time
 from pathlib import Path
 from typing import List, Optional
@@ -30,6 +32,51 @@ import validator
 import video_processor
 
 _keep_running = True
+
+BANNER = r"""
+  ____                 _____     ____            _
+ |  _ \ __ ___      __|_   _|__ |  _ \ ___  ___| |
+ | |_) / _` \ \ /\ / /  | |/ _ \| |_) / _ \/ _ \ |
+ |  _ < (_| |\ V  V /   | | (_) |  _ <  __/  __/ |
+ |_| \_\__,_| \_/\_/    |_|\___/|_| \_\___|\___|_|
+"""
+
+FEATURES = [
+    "Cuts silences and filler words -- keeps repetitions, they're part of how people talk",
+    "Word-by-word subtitles, burned in and ready to post",
+    "Vertical, horizontal, and square video, any frame rate",
+    "Runs 100% on this machine: no accounts, no uploads, nothing leaves your computer",
+]
+
+
+def _open_folder(path: Path) -> None:
+    """Opens `path` in the OS's file manager, best-effort. Never raises and
+    never blocks: on a machine with no desktop (a headless server, an SSH
+    session, a systemd service) the open command either doesn't exist or
+    fails immediately, and that's fine -- the folder still works, there's
+    just nothing to pop up. Started detached (Popen, not run) so a
+    misbehaving file manager can never hang the scan loop waiting for it."""
+    try:
+        if sys.platform == "win32":
+            import os
+            os.startfile(path)  # type: ignore[attr-defined]
+        elif sys.platform == "darwin":
+            subprocess.Popen(["open", str(path)], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        else:
+            subprocess.Popen(["xdg-open", str(path)], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    except OSError:
+        pass
+
+
+def _print_welcome() -> None:
+    print(BANNER)
+    for feature in FEATURES:
+        print(f"  * {feature}")
+    print()
+    print(f"  Drop your videos into: {config.RAW}")
+    print(f"  Pick up the finished ones from: {config.READY}")
+    print("  Press Ctrl+C to stop.")
+    print()
 
 
 def _handle_stop_signal(signum, frame):
@@ -133,7 +180,7 @@ def process_video(video: Path) -> Optional[str]:
 
     logger.update_status(video.name, "moving to Ready")
     if file_manager.finalize(temp_path, video):
-        logger.log(f"Done: {video.name}")
+        logger.log(f"Done: {video.name} -> ready in Ready/")
         return None
     logger.log(f"Failed: {video.name}")
     return "the finished video could not be copied to Ready/ (see Logs/rawtoreel.log)"
@@ -142,6 +189,11 @@ def process_video(video: Path) -> Optional[str]:
 def main() -> None:
     signal.signal(signal.SIGINT, _handle_stop_signal)
     signal.signal(signal.SIGTERM, _handle_stop_signal)
+
+    config.RAW.mkdir(parents=True, exist_ok=True)
+    _print_welcome()
+    if config.OPEN_RAW_FOLDER_ON_START:
+        _open_folder(config.RAW)
 
     logger.log("RawToReel starting")
 

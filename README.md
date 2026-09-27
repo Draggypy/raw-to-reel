@@ -199,12 +199,34 @@ source venv/bin/activate          # on Windows: .\venv\Scripts\Activate.ps1
 python src/main.py
 ```
 
-1. Copy a video into `Raw/` (formats: `.mp4`, `.mov`, `.mkv`, `.avi`).
+When it starts, it prints a short welcome banner and **opens the `Raw/` folder for you** in your file manager — you don't need to already know where it is:
+
+```
+  ____                 _____     ____            _
+ |  _ \ __ ___      __|_   _|__ |  _ \ ___  ___| |
+ | |_) / _` \ \ /\ / /  | |/ _ \| |_) / _ \/ _ \ |
+ |  _ < (_| |\ V  V /   | | (_) |  _ <  __/  __/ |
+ |_| \_\__,_| \_/\_/    |_|\___/|_| \_\___|\___|_|
+
+  * Cuts silences and filler words -- keeps repetitions, they're part of how people talk
+  * Word-by-word subtitles, burned in and ready to post
+  * Vertical, horizontal, and square video, any frame rate
+  * Runs 100% on this machine: no accounts, no uploads, nothing leaves your computer
+
+  Drop your videos into: /home/you/raw-to-reel/Raw
+  Pick up the finished ones from: /home/you/raw-to-reel/Ready
+  Press Ctrl+C to stop.
+```
+
+1. A window opens showing `Raw/`. Copy a video into it (formats: `.mp4`, `.mov`, `.mkv`, `.avi`).
 2. The program detects it on its own. It waits until the copy is finished (it watches for the file size to stop changing), so you can transfer files from your phone or a USB drive with no issues.
-3. It processes it. When it's done, it appears in `Ready/` **with the same name**.
-4. The original disappears from `Raw/` **only once the copy in `Ready/` has been verified.**
+3. It processes it — the same terminal prints each stage live as it happens.
+4. When it's done, the terminal prints `Done: my-video.mp4 -> ready in Ready/`, and the file appears there **with the same name**.
+5. The original disappears from `Raw/` **only once the copy in `Ready/` has been verified.**
 
 The program stays running, watching `Raw/`. It processes **one video at a time**, oldest to newest. To stop it: `Ctrl+C` (it finishes the video currently being processed, then exits).
+
+> **Running it as an unattended service** (systemd, a headless server, over SSH — see below)? There's no desktop to pop a folder open on. Set `OPEN_RAW_FOLDER_ON_START = False` in `src/config.py`; it's harmless to leave on either way; it just silently does nothing without a desktop environment.
 
 ### Watching what it's doing
 

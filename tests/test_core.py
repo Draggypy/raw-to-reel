@@ -29,6 +29,7 @@ import transcription
 import validator
 import video_processor
 import file_manager
+import main
 
 
 def _ffmpeg(*args):
@@ -422,6 +423,41 @@ class TestHorizontalAndPhoneFormats(unittest.TestCase):
             subtitle_generator.generate_ass([Caption("hi", 0.0, 1.0)], 1920, 1080, ass)
             expected = round(1080 * config.HORIZONTAL_BOTTOM_MARGIN_FRACTION)
             self.assertIn(f",{expected},1\n", ass.read_text(encoding="utf-8"))
+
+
+class TestOpenFolder(unittest.TestCase):
+
+    def test_never_blocks_even_if_the_launcher_hangs(self):
+        # Real risk: on Linux, xdg-open can hang (e.g. waiting on a D-Bus
+        # session that isn't there). _open_folder must never make the scan
+        # loop wait for it -- it's fire-and-forget.
+        import shutil, subprocess, sys, tempfile, textwrap, time
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            fake_bin = Path(tmpdir) / "bin"
+            fake_bin.mkdir()
+            launcher_name = "xdg-open" if sys.platform not in ("win32", "darwin") else (
+                "open" if sys.platform == "darwin" else None
+            )
+            if launcher_name is None:
+                self.skipTest("os.startfile on Windows can't be shadowed with a fake binary")
+            hanging_launcher = fake_bin / launcher_name
+            hanging_launcher.write_text("#!/bin/sh" + "\n" + "sleep 60" + "\n")
+            hanging_launcher.chmod(0o755)
+
+            import os
+            original_path = os.environ.get("PATH", "")
+            os.environ["PATH"] = f"{fake_bin}:{original_path}"
+            try:
+                start = time.monotonic()
+                main._open_folder(Path(tmpdir))
+                elapsed = time.monotonic() - start
+            finally:
+                os.environ["PATH"] = original_path
+            self.assertLess(elapsed, 2.0, "the hanging launcher blocked the caller")
+
+    def test_never_raises_when_the_launcher_does_not_exist(self):
+        main._open_folder(Path("/this/path/does/not/matter"))  # must not raise
 
 
 class TestFailureReason(unittest.TestCase):

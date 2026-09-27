@@ -21,6 +21,13 @@ VIDEO_EXTENSIONS = {".mp4", ".mov", ".mkv", ".avi"}
 SCAN_INTERVAL_SEC = 5    # how often to check when there's nothing to process
 STABILITY_CHECKS = 2     # how many stable-size confirmations are required
 STABILITY_WAIT_SEC = 2   # seconds to wait between stability checks
+# Opens Raw/ in the desktop file manager the moment the program starts, so
+# a first-time user doesn't have to already know that folder exists or
+# where to find it -- they run the program, a window pops up, they drop
+# videos in it. Silently does nothing if it can't (no desktop environment
+# -- e.g. running as a headless systemd service on a server, or over SSH).
+# Turn this off for that kind of unattended setup.
+OPEN_RAW_FOLDER_ON_START = True
 
 # --- Whisper (transcription) ---
 WHISPER_MODEL = "small"       # "base" as a fallback if RAM usage needs to come down

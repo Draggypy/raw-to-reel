@@ -264,6 +264,63 @@ class TestFillerWords(unittest.TestCase):
         self.assertAlmostEqual(cuts[0].end, 0.9 - config.ONSET_GUARD_SEC)
 
 
+class TestLanguageDetection(unittest.TestCase):
+
+    def test_filler_words_for_spanish(self):
+        filler, ambiguous = config.filler_words_for("es")
+        self.assertEqual(filler, config.FILLER_WORDS)
+        self.assertEqual(ambiguous, config.AMBIGUOUS_FILLER_WORDS)
+
+    def test_filler_words_for_english(self):
+        filler, ambiguous = config.filler_words_for("en")
+        self.assertIn("um", filler)
+        self.assertIn("like", ambiguous)
+        self.assertNotIn("eh", filler)  # not the Spanish list
+
+    def test_filler_words_for_unknown_language_falls_back_to_spanish(self):
+        # Safe by construction: an unmapped language just means the Spanish
+        # list is used, which won't match foreign words -- nothing gets
+        # wrongly cut, it just cuts nothing extra.
+        filler, ambiguous = config.filler_words_for("fr")
+        self.assertEqual(filler, config.FILLER_WORDS)
+
+    def test_english_unambiguous_filler_is_always_cut(self):
+        words = [Word(t, i * 0.3, (i + 1) * 0.3) for i, t in enumerate(["I", "um", "think"])]
+        filler, ambiguous = config.filler_words_for("en")
+        cuts = repetition_detector.detect_filler_words(words, [], filler, ambiguous)
+        self.assertEqual(len(cuts), 1)
+        self.assertAlmostEqual(cuts[0].start, 0.3)
+
+    def test_english_ambiguous_filler_in_fluent_sentence_is_not_cut(self):
+        words = [Word(t, i * 0.3, (i + 1) * 0.3) for i, t in enumerate(["I", "really", "like", "this"])]
+        filler, ambiguous = config.filler_words_for("en")
+        self.assertEqual(repetition_detector.detect_filler_words(words, [], filler, ambiguous), [])
+
+    def test_english_ambiguous_filler_with_pause_is_cut(self):
+        words = [
+            Word("so", 0.0, 1.2),
+            Word("that", 1.2, 1.5),
+            Word("happened", 1.5, 1.9),
+        ]
+        silences = [Silence(start=0.3, end=1.15)]
+        filler, ambiguous = config.filler_words_for("en")
+        cuts = repetition_detector.detect_filler_words(words, silences, filler, ambiguous)
+        self.assertEqual(len(cuts), 1)
+
+    def test_english_repetition_with_pause_uses_english_filler_list(self):
+        # "I think... um... I think this is great": the filler word between
+        # the two occurrences is what marks it as a real stumble.
+        words = [
+            Word("I", 0.0, 0.3), Word("think", 0.3, 0.6),
+            Word("um", 0.6, 0.9),
+            Word("I", 0.9, 1.2), Word("think", 1.2, 1.5), Word("great", 1.5, 1.8),
+        ]
+        filler, _ = config.filler_words_for("en")
+        cuts = repetition_detector.detect_repetitions(words, [], filler)
+        self.assertEqual(len(cuts), 1)
+        self.assertAlmostEqual(cuts[0].start, 0.0)
+
+
 class TestSubtitleGenerator(unittest.TestCase):
 
     def test_format_ass_time(self):
@@ -504,6 +561,19 @@ class TestUsableAudio(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmpdir:
             video = self._synthetic_video(Path(tmpdir), with_audio=True)
             transcription.verify_audio_usable(video)  # must not raise
+
+    def test_transcribe_video_carries_the_detected_language(self):
+        # transcribe_video must plumb Whisper's detected language through to
+        # TranscriptionResult -- that's what main.py uses to pick the right
+        # filler-word list. Whisper itself is stubbed out (no network here).
+        import unittest.mock as mock
+        with tempfile.TemporaryDirectory() as tmpdir:
+            video = self._synthetic_video(Path(tmpdir), with_audio=True)
+            fake_words = [Word("hello", 0.0, 0.3)]
+            with mock.patch.object(transcription, "transcribe", return_value=(fake_words, "en")):
+                result = transcription.transcribe_video(video)
+            self.assertEqual(result.language, "en")
+            self.assertEqual(result.words, fake_words)
 
 
 class TestWhisperEngine(unittest.TestCase):

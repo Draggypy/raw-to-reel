@@ -9,7 +9,7 @@ import gc
 import subprocess
 from dataclasses import dataclass
 from pathlib import Path
-from typing import List
+from typing import List, Optional, Tuple
 
 import config
 import logger
@@ -26,6 +26,7 @@ class Word:
 class TranscriptionResult:
     audio_path: Path
     words: List[Word]
+    language: Optional[str]  # Whisper's detected/used language code, e.g. "es", "en"
 
 
 def verify_audio_usable(video: Path) -> None:
@@ -95,10 +96,16 @@ def extract_audio(video: Path) -> Path:
     return destination
 
 
-def transcribe(audio_path: Path) -> List[Word]:
+def transcribe(audio_path: Path) -> Tuple[List[Word], Optional[str]]:
     """Loads the model, transcribes, releases the model. Never keeps the
     model loaded between calls -- every video pays the loading cost again,
-    in exchange for never accumulating memory from one video to the next."""
+    in exchange for never accumulating memory from one video to the next.
+
+    Returns the words AND the language Whisper used. With
+    WHISPER_LANGUAGE=None it auto-detects from the first ~30s of audio --
+    `info.language` is what it actually settled on, which is what the rest
+    of the pipeline needs to pick the right filler-word list (see
+    config.filler_words_for)."""
     from faster_whisper import WhisperModel
 
     model = WhisperModel(
@@ -107,7 +114,7 @@ def transcribe(audio_path: Path) -> List[Word]:
         compute_type=config.WHISPER_COMPUTE_TYPE,
     )
     try:
-        segments, _info = model.transcribe(
+        segments, info = model.transcribe(
             str(audio_path),
             language=config.WHISPER_LANGUAGE,
             word_timestamps=True,
@@ -117,11 +124,12 @@ def transcribe(audio_path: Path) -> List[Word]:
             for segment in segments
             for w in segment.words
         ]
+        language = getattr(info, "language", None)
     finally:
         del model
         gc.collect()
 
-    return words
+    return words, language
 
 
 def transcribe_video(video: Path) -> TranscriptionResult:
@@ -129,7 +137,7 @@ def transcribe_video(video: Path) -> TranscriptionResult:
     audio_path = extract_audio(video)
 
     logger.update_status(video.name, "transcribing")
-    words = transcribe(audio_path)
-    logger.log(f"Transcription: {len(words)} word(s)")
+    words, language = transcribe(audio_path)
+    logger.log(f"Transcription: {len(words)} word(s), language={language}")
 
-    return TranscriptionResult(audio_path=audio_path, words=words)
+    return TranscriptionResult(audio_path=audio_path, words=words, language=language)

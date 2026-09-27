@@ -116,9 +116,12 @@ def process_video(video: Path) -> Optional[str]:
             pass  # not critical, it's just the intermediate WAV
 
         logger.update_status(video.name, "looking for filler words")
-        filler_cuts = repetition_detector.detect_filler_words(result.words, silences)
+        filler_words, ambiguous_filler_words = config.filler_words_for(result.language)
+        filler_cuts = repetition_detector.detect_filler_words(
+            result.words, silences, filler_words, ambiguous_filler_words
+        )
         repetition_cuts = (
-            repetition_detector.detect_repetitions(result.words, silences)
+            repetition_detector.detect_repetitions(result.words, silences, filler_words)
             if config.CUT_REPETITIONS
             else []
         )

@@ -17,7 +17,7 @@ y pulas") is part of normal speech, not a false start.
 
 import re
 import unicodedata
-from typing import List, Sequence
+from typing import List, Optional, Sequence
 
 import config
 from cut_manager import Cut
@@ -48,10 +48,18 @@ def _has_adjacent_pause(start: float, end: float, silences: Sequence[Silence]) -
 
 
 def detect_filler_words(
-    words: List[Word], silences: Sequence[Silence] = ()
+    words: List[Word],
+    silences: Sequence[Silence] = (),
+    filler_words: Optional[Sequence[str]] = None,
+    ambiguous_filler_words: Optional[Sequence[str]] = None,
 ) -> List[Cut]:
     """Looks for the longest filler word (one or more words, e.g. "o sea")
     matching at each position.
+
+    `filler_words`/`ambiguous_filler_words` default to config.FILLER_WORDS
+    / config.AMBIGUOUS_FILLER_WORDS (Spanish) when not given -- callers
+    that know the transcription's language should pass
+    config.filler_words_for(language) instead (see main.py).
 
     Unambiguous ones are ALWAYS cut when they appear. The ones in
     AMBIGUOUS_FILLER_WORDS ("este", "tipo"...) are also real words ("en
@@ -68,9 +76,13 @@ def detect_filler_words(
     followed by a pause, the silence falls INSIDE the word's stretched
     interval, which is why this looks for overlap rather than exact
     adjacency."""
+    filler_words = filler_words if filler_words is not None else config.FILLER_WORDS
+    ambiguous_filler_words = (
+        ambiguous_filler_words if ambiguous_filler_words is not None else config.AMBIGUOUS_FILLER_WORDS
+    )
     normalized = [_normalize(w.text) for w in words]
     n = len(words)
-    max_filler_words = max(len(m.split()) for m in config.FILLER_WORDS)
+    max_filler_words = max(len(m.split()) for m in filler_words)
     cuts = []
     i = 0
 
@@ -80,14 +92,14 @@ def detect_filler_words(
             if i + length > n:
                 continue
             phrase = " ".join(normalized[i:i + length])
-            if phrase in config.FILLER_WORDS:
+            if phrase in filler_words:
                 match_len = length
                 break
 
         if match_len:
             start = words[i].start
             end = _safe_end(words, i + match_len - 1)
-            is_ambiguous = phrase in config.AMBIGUOUS_FILLER_WORDS
+            is_ambiguous = phrase in ambiguous_filler_words
             if end > start and (not is_ambiguous or _has_adjacent_pause(start, end, silences)):
                 cuts.append(Cut(start=start, end=end))
             i += match_len
@@ -103,6 +115,7 @@ def _has_doubt_in_between(
     end_of_first: int,
     start_of_second: int,
     silences: Sequence[Silence],
+    filler_words: Sequence[str],
 ) -> bool:
     """Between the last word of the first occurrence and the first word of
     the second one there has to be a real pause (measured on the audio) or
@@ -113,12 +126,14 @@ def _has_doubt_in_between(
     if any(since <= s.start < until for s in silences):
         return True
     return any(
-        normalized[k] in config.FILLER_WORDS for k in range(end_of_first + 1, start_of_second)
+        normalized[k] in filler_words for k in range(end_of_first + 1, start_of_second)
     )
 
 
 def detect_repetitions(
-    words: List[Word], silences: Sequence[Silence] = ()
+    words: List[Word],
+    silences: Sequence[Silence] = (),
+    filler_words: Optional[Sequence[str]] = None,
 ) -> List[Cut]:
     """Detects a false start: the speaker begins a sentence, stumbles, and
     starts it over the same way ("I think that... I think this is
@@ -139,6 +154,7 @@ def detect_repetitions(
     made everything in between get deleted, leaving "I want to show you
     what's coming". Repeating a common expression later in the sentence is
     NOT stumbling."""
+    filler_words = filler_words if filler_words is not None else config.FILLER_WORDS
     normalized = [_normalize(w.text) for w in words]
     n = len(words)
     cuts = []
@@ -167,7 +183,7 @@ def detect_repetitions(
                 break
 
         if found and _has_doubt_in_between(
-            words, normalized, i + found[0] - 1, found[1], silences
+            words, normalized, i + found[0] - 1, found[1], silences, filler_words
         ):
             _, j = found
             end = words[j].start - config.ONSET_GUARD_SEC

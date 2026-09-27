@@ -33,7 +33,12 @@ OPEN_RAW_FOLDER_ON_START = True
 WHISPER_MODEL = "small"       # "base" as a fallback if RAM usage needs to come down
 WHISPER_DEVICE = "cpu"
 WHISPER_COMPUTE_TYPE = "int8"  # quantized, much lighter on CPU
-WHISPER_LANGUAGE = "es"        # Spanish speech in, Spanish speech out -- see FILLER_WORDS below
+# None = auto-detect from the first ~30s of audio (faster-whisper's own
+# language identification). Works for Spanish or English without touching
+# this file -- FILLER_WORDS_BY_LANGUAGE below picks the right filler-word
+# list for whichever one Whisper detects. Pin it to "es" or "en" only if
+# auto-detection ever gets it wrong on a specific voice/recording.
+WHISPER_LANGUAGE = None
 
 # --- Silence detection ---
 # ADAPTIVE threshold (this video's own noise floor + margin), not a fixed
@@ -178,10 +183,11 @@ MIN_SEGMENT_SEC = 0.5
 # jumps into fluent speech. The editor specializes in silences and filler
 # words; the code stays in place to try it again by setting this to True.
 CUT_REPETITIONS = False
-# NOTE: these are literal Spanish filler words on purpose. The product
-# transcribes and edits Spanish speech (see WHISPER_LANGUAGE above), so
-# this list has to match what a Spanish speaker actually says -- translating
-# the values themselves would break detection, not just the code around it.
+# NOTE: these are literal Spanish filler words on purpose -- this list has
+# to match what a Spanish speaker actually says, translating the values
+# themselves would break detection, not just the code around it. Same
+# reasoning for the English list right below: it's real English filler
+# words, not a translation of the Spanish ones.
 FILLER_WORDS = {"eh", "emm", "mmm", "este", "o sea", "tipo", "digamos"}
 # These are also real words ("in THIS video" -- "en ESTE video", "THAT
 # KIND of thing" -- "TIPO de cosa", "I MEAN..." -- "O SEA que..."). Cutting
@@ -191,6 +197,32 @@ FILLER_WORDS = {"eh", "emm", "mmm", "este", "o sea", "tipo", "digamos"}
 # sentence. The ones not on this list ("eh", "emm", "mmm", "digamos") have
 # no legitimate use within a sentence and are always cut.
 AMBIGUOUS_FILLER_WORDS = {"este", "tipo", "o sea"}
+
+# English equivalent, added 2026-09-27 alongside WHISPER_LANGUAGE
+# auto-detection. "um"/"uh"/"erm" have no legitimate use inside a sentence
+# (unambiguous, always cut, same role as "eh"/"emm" above). Everything
+# else on the ambiguous list is also a normal word or phrase ("I really
+# LIKE this", "SO, that happened", "I MEAN it") -- same rule as Spanish's
+# "este"/"tipo": only cut with a real pause right next to them.
+FILLER_WORDS_EN = {"um", "uh", "erm", "like", "so", "well", "i mean", "you know", "kind of", "sort of"}
+AMBIGUOUS_FILLER_WORDS_EN = {"like", "so", "well", "i mean", "you know", "kind of", "sort of"}
+
+# Which filler-word list to use for a given Whisper-detected language code.
+# Spanish is the fallback for anything Whisper detects that isn't English --
+# matches the "Spanish first" default this project has always had.
+FILLER_WORDS_BY_LANGUAGE = {"es": FILLER_WORDS, "en": FILLER_WORDS_EN}
+AMBIGUOUS_FILLER_WORDS_BY_LANGUAGE = {"es": AMBIGUOUS_FILLER_WORDS, "en": AMBIGUOUS_FILLER_WORDS_EN}
+
+
+def filler_words_for(language):
+    """(filler_words, ambiguous_filler_words) for a Whisper language code.
+    Falls back to Spanish for any language other than English -- safe by
+    construction: an unrecognized filler-word list just means nothing
+    matches, so nothing gets cut, never the wrong thing."""
+    return (
+        FILLER_WORDS_BY_LANGUAGE.get(language, FILLER_WORDS),
+        AMBIGUOUS_FILLER_WORDS_BY_LANGUAGE.get(language, AMBIGUOUS_FILLER_WORDS),
+    )
 # How close (in seconds) a detected silence has to be to the ambiguous
 # filler word to count it as "isolated". Measured against the real audio,
 # not against Whisper's timestamps (which never leave gaps).

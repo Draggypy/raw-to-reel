@@ -305,7 +305,7 @@ The most common causes, from most to least frequent:
 | Message in the log | What happened | What to do |
 |---|---|---|
 | `The video has no audio track` / `The video's audio track is empty` | **The phone recorded video but no audio.** The file has an audio track created but with zero samples (0 bytes of sound) — this happens when another app (a call, a voice recorder, an assistant) had the microphone locked when recording started, or the mic was muted/covered. | Play the video back: if you hear nothing, that confirms it. You'll need to re-record — there's no audio to edit. |
-| `the transcription returned no words` | The audio exists and has sound, but Whisper didn't recognize any speech in Spanish: volume too low, too much background noise/echo, the mic too far away, or the clip is of something else (music, ambient sound, noisy silence). | Record closer to the microphone and with less background noise. If you speak another language, adjust `WHISPER_LANGUAGE`. |
+| `the transcription returned no words` | The audio exists and has sound, but Whisper didn't recognize any speech: volume too low, too much background noise/echo, the mic too far away, or the clip is of something else (music, ambient sound, noisy silence). | Record closer to the microphone and with less background noise. |
 | `ffmpeg failed extracting audio: ...` | The video container is broken or `ffmpeg` doesn't recognize the audio/video codec. Could be a file that was recording when something interrupted it (power cut, storage filled up) or an exotic format. | Run `ffprobe your-video.mp4` and check what it says about the streams. If the file looks incomplete, it's a corrupted video, not a bug in the editor. |
 | `ffmpeg failed cutting a segment` / `ffmpeg failed concatenating` / `ffmpeg failed burning subtitles` | A specific `ffmpeg` step failed — the full message (in `Logs/rawtoreel.log`, never truncated) carries the actual `ffmpeg` error underneath. | Copy the full message from the log; it almost always states the concrete problem (unsupported codec, out of disk space, subtitle font not found). |
 | `VALIDATION ERROR: only weighs N bytes` | The final file came out empty or truncated — typically from running out of disk space mid-render. | Check free space in `Temp/` and `Ready/`. |
@@ -323,7 +323,7 @@ The automatic validation doesn't catch this because the file is technically vali
 | Subtitles are out of sync with the audio | Subtitles are timed against the real length of every cut, so they shouldn't drift. (Before 2026-09-27 they drifted by ~20 ms per cut, which added up to over a second on long videos.) If you still see it, it's a real desync. | Update to the latest version (`git pull`). If it persists, report it with the log (`Cut duration: ... real (requested ...)` shows the numbers). |
 | Still cuts mid-thought, feels like "it cuts the moment I stop talking" | Fine-tuning of sensitivity, not a bug. | Raise `MIN_MIDSENTENCE_PAUSE_MS` and/or `SILENCE_MARGIN_MS` in `src/config.py`. |
 | Leaves very long silences uncut | The silence threshold is too strict for your background noise level. | Lower `DB_MARGIN_OVER_FLOOR` or carefully raise `DB_THRESHOLD_MAX` (see the comments in `config.py` — they're there so you don't break the balance). |
-| Cuts "um"/"like"/"this" ("este"/"tipo") that were actually part of a normal sentence | A filler-word false positive. | Remove that word from `FILLER_WORDS` (or from `AMBIGUOUS_FILLER_WORDS` if it already requires a pause) in `src/config.py`. |
+| Cuts "um"/"like"/"este"/"tipo" that were actually part of a normal sentence | A filler-word false positive. | Remove that word from `FILLER_WORDS`/`FILLER_WORDS_EN` (or from `AMBIGUOUS_FILLER_WORDS`/`AMBIGUOUS_FILLER_WORDS_EN` if it already requires a pause) in `src/config.py`. |
 
 ---
 
@@ -344,8 +344,8 @@ Everything adjustable lives in a single file: [`src/config.py`](src/config.py). 
 | `DB_MARGIN_OVER_FLOOR` | `17` | Detector sensitivity: the "silence" threshold is the video's own noise floor plus this margin. |
 | `DB_THRESHOLD_MAX` | `-35` | The threshold never rises above this, to avoid entering the voice range (soft speech sits around -30 dB). |
 | `SILENCE_SMOOTHING_MS` / `HYSTERESIS_DB` | `50` / `3` | Smooth the volume curve and keep a soft voice that grazes the threshold from opening and closing silences several times a second. |
-| `FILLER_WORDS` | `eh, emm, mmm, este, o sea, tipo, digamos` | List of filler words to cut (Spanish). Edit it to match how you speak. |
-| `AMBIGUOUS_FILLER_WORDS` | `este, tipo, o sea` | Filler words that are also real words ("in this video" — "en este video"). Only cut if they have a real pause right next to them. |
+| `FILLER_WORDS` / `FILLER_WORDS_EN` | Spanish / English lists | Filler words to cut, one list per language. The one used is picked automatically from what Whisper detected (see `WHISPER_LANGUAGE`). Edit either to match how you speak. |
+| `AMBIGUOUS_FILLER_WORDS` / `AMBIGUOUS_FILLER_WORDS_EN` | `este, tipo, o sea` / `like, so, well, i mean, you know, kind of, sort of` | Filler words that are also real words ("in this video", "I really **like** this"). Only cut if they have a real pause right next to them. |
 | `CUT_REPETITIONS` | `False` | Cut false starts ("I think that... I think that"). **Turned off on purpose**: in practice we repeat an idea to clarify or emphasize it ("look what happens here... but the opposite could happen... but this happens"), not just because we stumble, and automatic cutting doesn't tell the two apart well. Set it to `True` if you'd rather it also try to cut these repetitions. |
 | `REPETITION_WINDOW_SEC` | `1.5` | (Only with `CUT_REPETITIONS = True`.) How close together a repetition has to be to count as a false start; it also needs a real pause or a filler word in between. |
 
@@ -353,7 +353,7 @@ Everything adjustable lives in a single file: [`src/config.py`](src/config.py). 
 
 | Constant | Default value | What it controls |
 |---|---|---|
-| `WHISPER_LANGUAGE` | `"es"` | Spoken language. **Built for Spanish**: the filler-word list is too. |
+| `WHISPER_LANGUAGE` | `None` | Spoken language. `None` **auto-detects** it from the audio (currently picks between the Spanish and English filler-word lists; anything else Whisper detects falls back to the Spanish list). Pin it to `"es"` or `"en"` if auto-detection ever guesses wrong on a specific voice. |
 | `WHISPER_MODEL` | `"small"` | Model size. `"base"` uses less RAM; `"medium"` transcribes better but is slower. |
 | `WHISPER_DEVICE` / `WHISPER_COMPUTE_TYPE` | `"cpu"` / `"int8"` | With an NVIDIA GPU you can use `"cuda"` and `"float16"`. |
 
@@ -408,6 +408,7 @@ A single program (`src/main.py`) acts as both watcher and processor: it scans, p
 - **Only the final pass re-encodes at real quality.** The intermediate segments are encoded fast (`ultrafast`) and discarded.
 - **Subtitles are remapped, not re-transcribed:** the transcription's words are shifted onto the already-cut timing, and a word that's no longer in the final video doesn't produce a subtitle.
 - **Filler words are cut every time they appear on the list**, without requiring a pause around them (Whisper almost never leaves timestamps with that clean a gap). The cost: "este" and "tipo" are also real words, and sometimes a legitimate use gets cut. If it bothers you, remove them from `FILLER_WORDS`.
+- **Language is auto-detected, not assumed.** `transcribe_video` reads back Whisper's own detected language (`info.language`) and `config.filler_words_for()` maps it to the matching filler-word list -- Spanish and English today. Detecting the language wrong would only affect which filler words get cut, never the transcription itself (Whisper still transcribes in whatever language it heard).
 
 ### How the result is validated
 
@@ -422,7 +423,7 @@ Before delivering, `validator.py` runs these checks from cheapest to most expens
 
 ## Known limits
 
-- **Spanish first.** The language and the filler-word list are configured for Spanish; for another language you'll need to change `WHISPER_LANGUAGE` and `FILLER_WORDS`.
+- **Spanish and English, auto-detected.** Any other language transcribes fine (Whisper supports ~100), but falls back to the Spanish filler-word list, so filler words in that language won't be cut. Add a `FILLER_WORDS_<LANG>` list and a line in `config.filler_words_for()` to support another one.
 - **One video at a time.** No parallel processing (on purpose: it's easier on memory).
 - **Built for one person talking to camera.** It's not a general-purpose editor: no transitions, music, zoom, or B-roll.
 - **Subtitles and cuts are tuned to taste.** The defaults come from real-world use, but every voice and every microphone is different: try it with a short video and adjust `config.py`.

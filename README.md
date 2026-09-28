@@ -201,6 +201,8 @@ python src/main.py
 
 When it starts, it prints a short welcome banner and **opens the `Raw/` folder for you** in your file manager — you don't need to already know where it is:
 
+<p align="center"><img src="assets/screenshot-terminal.png" alt="RawToReel's startup banner in a terminal" width="620"></p>
+
 ```
   ____                 _____     ____            _
  |  _ \ __ ___      __|_   _|__ |  _ \ ___  ___| |
@@ -219,6 +221,9 @@ When it starts, it prints a short welcome banner and **opens the `Raw/` folder f
 ```
 
 1. A window opens showing `Raw/`. Copy a video into it (formats: `.mp4`, `.mov`, `.mkv`, `.avi`).
+
+   <p align="center"><img src="assets/screenshot-raw-folder.png" alt="Raw/ folder open with a video dropped in, ready to process" width="560"></p>
+
 2. The program detects it on its own. It waits until the copy is finished (it watches for the file size to stop changing), so you can transfer files from your phone or a USB drive with no issues.
 3. It processes it — the same terminal prints each stage live as it happens.
 4. When it's done, the terminal prints `Done: my-video.mp4 -> ready in Ready/`, and the file appears there **with the same name**.
@@ -227,6 +232,10 @@ When it starts, it prints a short welcome banner and **opens the `Raw/` folder f
 The program stays running, watching `Raw/`. It processes **one video at a time**, oldest to newest. To stop it: `Ctrl+C` (it finishes the video currently being processed, then exits).
 
 It also **opens `Ready/` for you** once your batch finishes (the queue drains to empty) — one popup per batch, not per video, so dropping in five videos doesn't open five windows.
+
+<p align="center"><img src="assets/screenshot-ready-folder.png" alt="Ready/ folder open with the finished, subtitled video" width="560"></p>
+
+> The two folder screenshots above are illustrations of what the file manager looks like when it pops up — not a fixed UI RawToReel draws itself. What actually opens is your own OS's file manager (Explorer, Finder, or your Linux file manager), showing the real `Raw/`/`Ready/` folder, in whatever view and theme you already have it set to.
 
 > **Running it as an unattended service** (systemd, a headless server, over SSH — see below)? There's no desktop to pop a folder open on. Set `OPEN_RAW_FOLDER_ON_START = False` and `OPEN_READY_FOLDER_ON_DONE = False` in `src/config.py`; it's harmless to leave them on either way, they just silently do nothing without a desktop environment.
 

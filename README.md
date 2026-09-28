@@ -203,23 +203,6 @@ When it starts, it prints a short welcome banner and **opens the `Raw/` folder f
 
 <p align="center"><img src="assets/screenshot-terminal.png" alt="RawToReel's startup banner in a terminal" width="620"></p>
 
-```
-  ____                 _____     ____            _
- |  _ \ __ ___      __|_   _|__ |  _ \ ___  ___| |
- | |_) / _` \ \ /\ / /  | |/ _ \| |_) / _ \/ _ \ |
- |  _ < (_| |\ V  V /   | | (_) |  _ <  __/  __/ |
- |_| \_\__,_| \_/\_/    |_|\___/|_| \_\___|\___|_|
-
-  * Cuts silences and filler words -- keeps repetitions, they're part of how people talk
-  * Word-by-word subtitles, burned in and ready to post
-  * Vertical, horizontal, and square video, any frame rate
-  * Runs 100% on this machine: no accounts, no uploads, nothing leaves your computer
-
-  Drop your videos into: /home/you/raw-to-reel/Raw
-  Pick up the finished ones from: /home/you/raw-to-reel/Ready
-  Press Ctrl+C to stop.
-```
-
 1. A window opens showing `Raw/`. Copy a video into it (formats: `.mp4`, `.mov`, `.mkv`, `.avi`).
 
    <p align="center"><img src="assets/screenshot-raw-folder.png" alt="Raw/ folder open with a video dropped in, ready to process" width="560"></p>
